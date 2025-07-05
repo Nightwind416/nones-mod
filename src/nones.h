@@ -1,6 +1,12 @@
 #ifndef NONES_H
 #define NONES_H
 
+#include <stdint.h>
+#include <stdbool.h>
+#include "arena.h"
+#include "system.h"
+#include <SDL3/SDL.h>
+
 //#define SCREEN_WIDTH 340
 //#define SCREEN_HEIGHT 260
 #define SCREEN_WIDTH 256

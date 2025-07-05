@@ -26,14 +26,19 @@ REL_BIN := $(REL_DIR)/$(BIN)
 DBG_BIN := $(DBG_DIR)/$(BIN)
 
 
-.PHONY: all clean release debug run tarball
+
+.PHONY: all clean release debug run tarball dll
+
 
 all: release
 
 
-release: $(REL_BIN)
+
+release: $(REL_BIN) build/release/nones.dll
 	copy /Y $(subst /,\\,$<) $(BIN)
 	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
+
+dll: build/release/nones.dll
 
 
 $(REL_BIN): $(REL_OBJS)
@@ -44,6 +49,8 @@ $(REL_DIR)/%.o: src/%.c
 	@if not exist $(subst /,\\,$(REL_DIR)) mkdir $(subst /,\\,$(REL_DIR))
 	$(CC) $(REL_FLAGS) $(CFLAGS) -c -o $@ $<
 
+build/release/nones.dll: $(REL_OBJS)
+	$(CC) -shared -o $@ $^ -lSDL3 -Llib/SDL3/lib
 
 debug: $(DBG_BIN)
 	copy /Y $(subst /,\\,$<) $(BIN)
