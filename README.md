@@ -2,6 +2,10 @@
 
 A simple NTSC NES emulator written in C.
 
+## Modification
+
+This project is a fork of the original Nones emulator, which was created by [@maximilianm], for use in a personal project.
+
 ### Current State
 
 NROM, UxROM, AxRom, CNROM, MMC1, are currently supported along with most MMC3 based games.

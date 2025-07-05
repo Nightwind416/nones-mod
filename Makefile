@@ -1,6 +1,8 @@
 CC := gcc
-CFLAGS := -std=c11 -Wall -Wextra -pedantic
-LDFLAGS := -lm -lSDL3
+SDL3_INC := -Ilib/SDL3/include
+SDL3_LIB := -Llib/SDL3/lib
+CFLAGS := -std=c11 -Wall -Wextra -pedantic $(SDL3_INC)
+LDFLAGS := -lm -lSDL3 $(SDL3_LIB)
 REL_FLAGS := -O2 -D DISABLE_DEBUG -D DISABLE_CPU_LOG
 DBG_FLAGS := -ggdb -Og -D DISABLE_CPU_LOG
 # For profiling
@@ -8,14 +10,9 @@ DBG_FLAGS := -ggdb -Og -D DISABLE_CPU_LOG
 # For memory checks
 #DBG_FLAGS := -ggdb -O2 -fsanitize=address -D DISABLE_DEBUG -D DISABLE_CPU_LOG
 
-ARCH := $(shell uname -m)
 
-BIN := nones
-VERSION ?= 0.1
-TARBALL_NAME := $(BIN)-$(VERSION)-linux-$(ARCH).tar.gz
-
-# Posix compatiable version of $(wildcard)
-SRCS := $(shell echo src/*.c)
+BIN := nones.exe
+SRCS := $(wildcard src/*.c)
 OBJS := $(SRCS:src/%.c=%.o)
 
 BUILD_DIR := build
@@ -33,32 +30,42 @@ DBG_BIN := $(DBG_DIR)/$(BIN)
 
 all: release
 
+
 release: $(REL_BIN)
-	@cp $< $(BIN)
+	copy /Y $(subst /,\\,$<) $(BIN)
+	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
+
 
 $(REL_BIN): $(REL_OBJS)
 	$(CC) $(REL_FLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+
 $(REL_DIR)/%.o: src/%.c
-	@mkdir -p $(REL_DIR)
+	@if not exist $(subst /,\\,$(REL_DIR)) mkdir $(subst /,\\,$(REL_DIR))
 	$(CC) $(REL_FLAGS) $(CFLAGS) -c -o $@ $<
 
+
 debug: $(DBG_BIN)
-	@cp $< $(BIN)
+	copy /Y $(subst /,\\,$<) $(BIN)
+	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
+
 
 $(DBG_BIN): $(DBG_OBJS)
 	$(CC) $(DBG_FLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+
 $(DBG_DIR)/%.o: src/%.c
-	@mkdir -p $(DBG_DIR)
+	@if not exist $(subst /,\\,$(DBG_DIR)) mkdir $(subst /,\\,$(DBG_DIR))
 	$(CC) $(DBG_FLAGS) $(CFLAGS) -c -o $@ $<
 
+
 run:
-	./$(BIN)
+	$(BIN)
+
 
 clean:
-	@rm -rf $(BUILD_DIR)
-	@if [ -f "$(BIN)" ]; then rm $(BIN); fi
+	@if exist $(BUILD_DIR) rmdir /S /Q $(BUILD_DIR)
+	@if exist $(BIN) del /Q $(BIN)
 	@if [ -f "$(TARBALL_NAME)" ]; then rm $(TARBALL_NAME); fi
 
 tarball:
