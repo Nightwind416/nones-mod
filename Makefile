@@ -51,6 +51,7 @@ $(REL_DIR)/%.o: src/%.c
 
 build/release/nones.dll: $(REL_OBJS)
 	$(CC) -shared -o $@ $^ -lSDL3 -Llib/SDL3/lib
+	copy /Y $(subst /,\\,$@) nones.dll
 
 debug: $(DBG_BIN)
 	copy /Y $(subst /,\\,$<) $(BIN)
