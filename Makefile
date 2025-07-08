@@ -10,9 +10,18 @@ DBG_FLAGS := -ggdb -Og -D DISABLE_CPU_LOG
 # For memory checks
 #DBG_FLAGS := -ggdb -O2 -fsanitize=address -D DISABLE_DEBUG -D DISABLE_CPU_LOG
 
-
-BIN := nones.exe
-SRCS := $(wildcard src/*.c)
+ifeq ($(POSIX),1)
+	OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+	ARCH := $(shell uname -m)
+	BIN := nones
+	VERSION := 0.2.0
+	TARBALL_NAME := $(BIN)-$(VERSION)-$(OS)-$(ARCH).tar.gz
+	# POSIX compatible version of $(wildcard)
+	SRCS := $(shell echo src/*.c)
+else
+	BIN := nones.exe
+	SRCS := $(wildcard src/*.c)
+endif
 OBJS := $(SRCS:src/%.c=%.o)
 
 BUILD_DIR := build
@@ -71,16 +80,22 @@ run:
 	$(BIN)
 
 
-clean:
+
+ifeq ($(POSIX),1)
+	@if [ -d "$(BUILD_DIR)" ]; then rm -r $(BUILD_DIR); else echo 'Nothing to clean up'; fi
+	@if [ -f "$(BIN)" ]; then rm $(BIN); fi
+	@if [ -f "$(TARBALL_NAME)" ]; then rm $(TARBALL_NAME); fi
+else
 	@if exist $(BUILD_DIR) rmdir /S /Q $(BUILD_DIR)
 	@if exist $(BIN) del /Q $(BIN)
-	@if [ -f "$(TARBALL_NAME)" ]; then rm $(TARBALL_NAME); fi
+	@REM Tarball is not created by default on Windows
+endif
 
 tarball:
-	@if [ ! -f "$(BIN)" ]; then \
-		echo "Please run make before creating a tarball."; \
-	else \
-		echo "Creating tarball $(TARBALL_NAME)..."; \
+	@if [ -f "$(BIN)" ]; then \
 		strip $(BIN); \
-		tar -czf $(TARBALL_NAME) $(BIN); \
+		tar -czf $(TARBALL_NAME) $(BIN) "LICENSE" "README.md"; \
+		echo "Created tarball $(TARBALL_NAME)..."; \
+	else \
+		echo "Please run 'make' before creating a tarball."; \
 	fi
