@@ -2,9 +2,13 @@
 
 A simple NTSC NES emulator written in C.
 
-## Modification
+## Modifications
 
-This project is a fork of the original Nones emulator, which was created by [@maximilianm], for use in a personal project.
+This project is a fork of [nones](https://github.com/purpasmart96/nones) by [@maximilianm].
+Modifications made by [@Nightwind416] in 2025
+
+* API added to allow external access to video, audio, input, and other items.
+* Package as DLL
 
 ### Current State
 

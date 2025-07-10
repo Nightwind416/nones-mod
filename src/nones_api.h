@@ -38,6 +38,24 @@ NONES_API void nones_run_realtime();
 // Stop the real-time emulation loop started by nones_run_realtime.
 NONES_API void nones_stop_realtime();
 
+// Get the current audio buffer fill level (0.0 to 1.0)
+NONES_API float nones_get_audio_buffer_level();
+
+// Check if new video frame is available since last call
+NONES_API int nones_has_new_frame();
+
+// Set controller input state (8 buttons: A, B, Select, Start, Up, Down, Left, Right)
+NONES_API void nones_set_controller_input(int controller, uint8_t buttons);
+
+// Get emulation timing statistics
+NONES_API void nones_get_timing_stats(float* fps, float* audio_underruns);
+
+// Flush/clear the audio ring buffer (useful for seeking or reset)
+NONES_API void nones_flush_audio_buffer();
+
+// Get audio latency information
+NONES_API void nones_get_audio_latency_info(float* buffer_ms, int* samples_available);
+
 #ifdef __cplusplus
 }
 #endif

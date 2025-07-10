@@ -36,7 +36,7 @@ DBG_BIN := $(DBG_DIR)/$(BIN)
 
 
 
-.PHONY: all clean release debug run tarball dll
+.PHONY: all clean release debug run tarball dll release-dll release-exe release-posix release-all
 
 
 all: release
@@ -99,3 +99,17 @@ tarball:
 	else \
 		echo "Please run 'make' before creating a tarball."; \
 	fi
+
+# Release variants
+release-dll: build/release/nones.dll
+	copy /Y $(subst /,\\,$<) nones.dll
+
+release-exe: $(REL_BIN)
+	copy /Y $(subst /,\\,$<) $(BIN)
+	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
+
+release-posix:
+	$(MAKE) POSIX=1 release
+
+release-all: release-dll release-exe
+	@echo "All release targets built successfully"
