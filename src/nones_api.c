@@ -1,4 +1,5 @@
-// Debug helper
+#include "system.h"
+#include "nones.h"
 #include <stdio.h>
 #include "nones_api.h"
 #include "nones.h"
@@ -12,6 +13,14 @@
 
 // Global emulator instance
 static Nones g_nones;
+
+// Debug helper
+// Properly shutdown the emulator and flush SRAM to .sav
+void nones_shutdown() {
+    if (g_nones.system) {
+        SystemShutdown(g_nones.system);
+    }
+}
 
 // Threading and synchronization
 static atomic_bool g_realtime_running = false;

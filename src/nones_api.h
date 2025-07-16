@@ -50,8 +50,12 @@ NONES_API void nones_set_controller_input(int controller, uint8_t buttons);
 // Get emulation timing statistics
 NONES_API void nones_get_timing_stats(float* fps, float* audio_underruns);
 
+
 // Flush/clear the audio ring buffer (useful for seeking or reset)
 NONES_API void nones_flush_audio_buffer();
+
+// Properly shutdown the emulator and flush SRAM to .sav
+NONES_API void nones_shutdown();
 
 // Get audio latency information
 NONES_API void nones_get_audio_latency_info(float* buffer_ms, int* samples_available);
