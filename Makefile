@@ -10,18 +10,24 @@ DBG_FLAGS := -ggdb -Og -D DISABLE_CPU_LOG
 # For memory checks
 #DBG_FLAGS := -ggdb -O2 -fsanitize=address -D DISABLE_DEBUG -D DISABLE_CPU_LOG
 
-ifeq ($(POSIX),1)
-	OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
-	ARCH := $(shell uname -m)
-	BIN := nones
-	VERSION := 0.2.0
-	TARBALL_NAME := $(BIN)-$(VERSION)-$(OS)-$(ARCH).tar.gz
-	# POSIX compatible version of $(wildcard)
-	SRCS := $(shell echo src/*.c)
-else
-	BIN := nones.exe
-	SRCS := $(wildcard src/*.c)
+ifeq ($(OS), Windows_NT)
+	ifneq ($(MSYSTEM), UCRT64)
+	$(error MSYS2-UCRT64 environment not detected!)
+	endif
+	OS_NAME := windows
+	ARCHIVE_FMT := .zip
 endif
+
+OS_NAME ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
+ARCH := $(shell uname -m)
+
+BIN := nones
+VERSION := 0.2.0
+ARCHIVE_FMT ?= .tar.gz
+ARCHIVE := $(BIN)-$(VERSION)-$(OS_NAME)-$(ARCH)$(ARCHIVE_FMT)
+
+# Posix compatiable version of $(wildcard)
+SRCS := $(shell echo src/*.c)
 OBJS := $(SRCS:src/%.c=%.o)
 
 BUILD_DIR := build
@@ -35,20 +41,15 @@ REL_BIN := $(REL_DIR)/$(BIN)
 DBG_BIN := $(DBG_DIR)/$(BIN)
 
 
-
-.PHONY: all clean release debug run tarball dll release-dll release-exe release-posix release-all
-
+.PHONY: all clean release debug run tarball win_zip
 
 all: release
 
-
-
-release: $(REL_BIN) build/release/nones.dll
-	copy /Y $(subst /,\\,$<) $(BIN)
-	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
-
-dll: build/release/nones.dll
-
+release: $(REL_BIN)
+ifeq ($(OS_NAME), windows)
+	cp /ucrt64/bin/SDL3.dll .
+endif
+	@cp $< $(BIN)
 
 $(REL_BIN): $(REL_OBJS)
 	$(CC) $(REL_FLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -63,9 +64,10 @@ build/release/nones.dll: $(REL_OBJS)
 	copy /Y $(subst /,\\,$@) nones.dll
 
 debug: $(DBG_BIN)
-	copy /Y $(subst /,\\,$<) $(BIN)
-	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
-
+ifeq ($(OS_NAME), windows)
+	cp /ucrt64/bin/SDL3.dll .
+endif
+	@cp $< $(BIN)
 
 $(DBG_BIN): $(DBG_OBJS)
 	$(CC) $(DBG_FLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -84,18 +86,14 @@ run:
 ifeq ($(POSIX),1)
 	@if [ -d "$(BUILD_DIR)" ]; then rm -r $(BUILD_DIR); else echo 'Nothing to clean up'; fi
 	@if [ -f "$(BIN)" ]; then rm $(BIN); fi
-	@if [ -f "$(TARBALL_NAME)" ]; then rm $(TARBALL_NAME); fi
-else
-	@if exist $(BUILD_DIR) rmdir /S /Q $(BUILD_DIR)
-	@if exist $(BIN) del /Q $(BIN)
-	@REM Tarball is not created by default on Windows
-endif
+	@if [ -f "$(ARCHIVE)" ]; then rm $(ARCHIVE); fi
+	@if [ -f "SDL3.dll" ]; then rm "SDL3.dll"; fi
 
 tarball:
 	@if [ -f "$(BIN)" ]; then \
 		strip $(BIN); \
-		tar -czf $(TARBALL_NAME) $(BIN) "LICENSE" "README.md"; \
-		echo "Created tarball $(TARBALL_NAME)..."; \
+		tar -czf $(ARCHIVE) $(BIN) "LICENSE" "README.md"; \
+		echo "Created tarball $(ARCHIVE)..."; \
 	else \
 		echo "Please run 'make' before creating a tarball."; \
 	fi
@@ -108,8 +106,14 @@ release-exe: $(REL_BIN)
 	copy /Y $(subst /,\\,$<) $(BIN)
 	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
 
-release-posix:
-	$(MAKE) POSIX=1 release
-
 release-all: release-dll release-exe
 	@echo "All release targets built successfully"
+
+win_zip:
+	@if [ -f "$(BIN)" ]; then \
+		strip $(BIN).exe; \
+		7z a $(ARCHIVE) $(BIN).exe "SDL3.dll" "LICENSE" "README.md"; \
+		echo "Created zip $(ARCHIVE)..."; \
+	else \
+		echo "Please run 'make' before creating a zip."; \
+	fi
