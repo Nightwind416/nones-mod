@@ -45,7 +45,7 @@ all: release
 
 release: $(REL_BIN) build/release/nones.dll
 	copy /Y $(subst /,\\,$<) $(BIN)
-	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
+	copy /Y lib\SDL3\bin\SDL3.dll SDL3.dll
 
 dll: build/release/nones.dll
 
@@ -64,7 +64,7 @@ build/release/nones.dll: $(REL_OBJS)
 
 debug: $(DBG_BIN)
 	copy /Y $(subst /,\\,$<) $(BIN)
-	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
+	copy /Y lib\SDL3\bin\SDL3.dll SDL3.dll
 
 
 $(DBG_BIN): $(DBG_OBJS)
@@ -106,7 +106,7 @@ release-dll: build/release/nones.dll
 
 release-exe: $(REL_BIN)
 	copy /Y $(subst /,\\,$<) $(BIN)
-	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
+	copy /Y lib\SDL3\bin\SDL3.dll SDL3.dll
 
 release-posix:
 	$(MAKE) POSIX=1 release
