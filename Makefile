@@ -10,24 +10,26 @@ DBG_FLAGS := -ggdb -Og -D DISABLE_CPU_LOG
 # For memory checks
 #DBG_FLAGS := -ggdb -O2 -fsanitize=address -D DISABLE_DEBUG -D DISABLE_CPU_LOG
 
+
 ifeq ($(OS), Windows_NT)
-	ifneq ($(MSYSTEM), UCRT64)
-	$(error MSYS2-UCRT64 environment not detected!)
-	endif
 	OS_NAME := windows
 	ARCHIVE_FMT := .zip
+	COPY_CMD := copy /Y
+	BIN_EXT := .exe
+else
+	COPY_CMD := cp
+	BIN_EXT :=
 endif
 
 OS_NAME ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
-ARCH := $(shell uname -m)
+ARCH := $(if $(filter windows,$(OS_NAME)),x64,$(shell uname -m))
 
 BIN := nones
 VERSION := 0.2.0
 ARCHIVE_FMT ?= .tar.gz
 ARCHIVE := $(BIN)-$(VERSION)-$(OS_NAME)-$(ARCH)$(ARCHIVE_FMT)
 
-# Posix compatiable version of $(wildcard)
-SRCS := $(shell echo src/*.c)
+SRCS := $(wildcard src/*.c)
 OBJS := $(SRCS:src/%.c=%.o)
 
 BUILD_DIR := build
@@ -46,10 +48,8 @@ DBG_BIN := $(DBG_DIR)/$(BIN)
 all: release
 
 release: $(REL_BIN)
-ifeq ($(OS_NAME), windows)
-	cp /ucrt64/bin/SDL3.dll .
-endif
-	@cp $< $(BIN)
+	$(COPY_CMD) lib\SDL3\bin\SDL3.dll SDL3.dll
+	$(COPY_CMD) build\release\nones$(BIN_EXT) nones$(BIN_EXT)
 
 $(REL_BIN): $(REL_OBJS)
 	$(CC) $(REL_FLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -61,11 +61,11 @@ $(REL_DIR)/%.o: src/%.c
 
 build/release/nones.dll: $(REL_OBJS)
 	$(CC) -shared -o $@ $^ -lSDL3 -Llib/SDL3/lib
-	copy /Y $(subst /,\\,$@) nones.dll
+	$(COPY_CMD) $(subst /,\\,$@) nones.dll
 
 debug: $(DBG_BIN)
 ifeq ($(OS_NAME), windows)
-	cp /ucrt64/bin/SDL3.dll .
+	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
 endif
 	@cp $< $(BIN)
 
@@ -97,6 +97,7 @@ tarball:
 	else \
 		echo "Please run 'make' before creating a tarball."; \
 	fi
+endif
 
 # Release variants
 release-dll: build/release/nones.dll
