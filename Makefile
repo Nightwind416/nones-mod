@@ -107,8 +107,8 @@ release-dll: build/release/nones.dll
 	copy /Y $(subst /,\\,$<) nones.dll
 
 release-exe: $(REL_BIN)
-	copy /Y $(subst /,\\,$<) $(BIN)
-	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
+	copy /Y $(subst /,\\,$<).exe $(BIN).exe
+	copy /Y lib\SDL3\bin\SDL3.dll SDL3.dll
 
 release-all: release-dll release-exe
 	@echo "All release targets built successfully"
