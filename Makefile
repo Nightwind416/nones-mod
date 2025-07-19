@@ -47,9 +47,15 @@ DBG_BIN := $(DBG_DIR)/$(BIN)
 
 all: release
 
-release: $(REL_BIN)
-	$(COPY_CMD) lib\SDL3\bin\SDL3.dll SDL3.dll
-	$(COPY_CMD) build\release\nones$(BIN_EXT) nones$(BIN_EXT)
+release: $(REL_BIN) build/release/nones.dll
+ifeq ($(OS_NAME), windows)
+	copy /Y $(subst /,\\,$<).exe $(BIN).exe
+else
+	copy /Y $(subst /,\\,$<) $(BIN)
+endif
+	copy /Y lib\SDL3\bin\SDL3.dll SDL3.dll
+
+dll: build/release/nones.dll
 
 $(REL_BIN): $(REL_OBJS)
 	$(CC) $(REL_FLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -65,7 +71,7 @@ build/release/nones.dll: $(REL_OBJS)
 
 debug: $(DBG_BIN)
 ifeq ($(OS_NAME), windows)
-	copy /Y lib\SDL3\lib\SDL3.dll SDL3.dll
+	copy /Y lib\SDL3\bin\SDL3.dll SDL3.dll
 endif
 	@cp $< $(BIN)
 
@@ -77,11 +83,8 @@ $(DBG_DIR)/%.o: src/%.c
 	@if not exist $(subst /,\\,$(DBG_DIR)) mkdir $(subst /,\\,$(DBG_DIR))
 	$(CC) $(DBG_FLAGS) $(CFLAGS) -c -o $@ $<
 
-
 run:
 	$(BIN)
-
-
 
 ifeq ($(POSIX),1)
 	@if [ -d "$(BUILD_DIR)" ]; then rm -r $(BUILD_DIR); else echo 'Nothing to clean up'; fi
