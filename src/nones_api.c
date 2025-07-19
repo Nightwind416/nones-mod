@@ -1,10 +1,9 @@
+#include "cart.h"
 #include "system.h"
 #include "nones.h"
 #include <stdio.h>
 #include "nones_api.h"
-#include "nones.h"
 #include <stdlib.h>
-#include "cart.h"
 #include <string.h>
 #include <stddef.h>
 
@@ -14,11 +13,22 @@
 // Global emulator instance
 static Nones g_nones;
 
+// Custom SRAM save path (if set)
+static char g_custom_save_path[256] = {0};
+
 // Debug helper
 // Properly shutdown the emulator and flush SRAM to .sav
 void nones_shutdown() {
     if (g_nones.system) {
         SystemShutdown(g_nones.system);
+    }
+}
+
+// Set custom save file path for SRAM
+void nones_set_save_path(const char* save_path) {
+    if (save_path && strlen(save_path) < sizeof(g_custom_save_path)) {
+        strncpy(g_custom_save_path, save_path, sizeof(g_custom_save_path) - 1);
+        g_custom_save_path[sizeof(g_custom_save_path) - 1] = '\0';
     }
 }
 
@@ -405,4 +415,42 @@ int nones_load_rom(const char* path) {
         SystemInit(g_nones.system, buffers);
     }
     return result;
+}
+
+// Helper: get SRAM save path
+static void get_sram_save_path(char* out_path, size_t out_size) {
+    if (g_custom_save_path[0]) {
+        strncpy(out_path, g_custom_save_path, out_size - 1);
+        out_path[out_size - 1] = '\0';
+    } else if (g_nones.system && g_nones.system->cart && g_nones.system->cart->name) {
+        snprintf(out_path, out_size, "%s.sav", g_nones.system->cart->name);
+    } else {
+        out_path[0] = '\0';
+    }
+}
+
+// Save SRAM to file
+int nones_save_sram() {
+    if (!g_nones.system || !g_nones.system->cart || !g_nones.system->cart->battery) return 1;
+    char save_path[256];
+    get_sram_save_path(save_path, sizeof(save_path));
+    if (!save_path[0]) return 2;
+    FILE *sav = fopen(save_path, "wb");
+    if (!sav) return 3;
+    fwrite(g_nones.system->cart->ram, CART_RAM_SIZE, 1, sav);
+    fclose(sav);
+    return 0;
+}
+
+// Load SRAM from file
+int nones_load_sram() {
+    if (!g_nones.system || !g_nones.system->cart || !g_nones.system->cart->battery) return 1;
+    char save_path[256];
+    get_sram_save_path(save_path, sizeof(save_path));
+    if (!save_path[0]) return 2;
+    FILE *sav = fopen(save_path, "rb");
+    if (!sav) return 3;
+    fread(g_nones.system->cart->ram, CART_RAM_SIZE, 1, sav);
+    fclose(sav);
+    return 0;
 }

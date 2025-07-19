@@ -50,12 +50,20 @@ NONES_API void nones_set_controller_input(int controller, uint8_t buttons);
 // Get emulation timing statistics
 NONES_API void nones_get_timing_stats(float* fps, float* audio_underruns);
 
-
 // Flush/clear the audio ring buffer (useful for seeking or reset)
 NONES_API void nones_flush_audio_buffer();
 
 // Properly shutdown the emulator and flush SRAM to .sav
 NONES_API void nones_shutdown();
+
+// Set custom save file path for SRAM
+NONES_API void nones_set_save_path(const char* save_path);
+
+// Save SRAM to file (uses custom path if set)
+NONES_API int nones_save_sram();
+
+// Load SRAM from file (uses custom path if set)
+NONES_API int nones_load_sram();
 
 // Get audio latency information
 NONES_API void nones_get_audio_latency_info(float* buffer_ms, int* samples_available);
