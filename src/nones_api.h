@@ -1,4 +1,3 @@
-
 #ifndef NONES_API_H
 #define NONES_API_H
 
@@ -67,6 +66,9 @@ NONES_API int nones_load_sram();
 
 // Get audio latency information
 NONES_API void nones_get_audio_latency_info(float* buffer_ms, int* samples_available);
+
+// Performs a soft reset of the emulator (resets CPU, PPU, etc. without reloading ROM).
+NONES_API void nones_soft_reset(void);
 
 #ifdef __cplusplus
 }

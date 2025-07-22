@@ -454,3 +454,10 @@ int nones_load_sram() {
     fclose(sav);
     return 0;
 }
+
+// Performs a soft reset of the emulator (resets CPU, PPU, etc. without reloading ROM).
+void nones_soft_reset(void) {
+    if (g_nones.system) {
+        SystemReset(g_nones.system);
+    }
+}
