@@ -12,15 +12,15 @@
 #include "cart.h"
 #include "nones.h"
 
-#define HIGH_RATE_SAMPLES 29780
+#define HIGH_RATE_SAMPLES 14890
 #define LOW_RATE_SAMPLES 735
 //#define LOW_RATE_SAMPLES 800
 
 static SDL_AudioStream *stream = NULL;
 
-static void upsample_to_44khz(const float *high_rate_buffer, int16_t *output_44khz_buffer, bool odd_frame)
+static void SampleTo44khz(const float *high_rate_buffer, int16_t *output_44khz_buffer)
 {
-    const double step = (double)(HIGH_RATE_SAMPLES + odd_frame) / LOW_RATE_SAMPLES;
+    const double step = (double)(HIGH_RATE_SAMPLES) / LOW_RATE_SAMPLES;
 
     double pos = 0.0;
     for (int i = 0; i < LOW_RATE_SAMPLES; i++)
@@ -30,7 +30,7 @@ static void upsample_to_44khz(const float *high_rate_buffer, int16_t *output_44k
 
         // Simple linear interpolation
         float a = high_rate_buffer[index];
-        float b = (index + 1 < (HIGH_RATE_SAMPLES + odd_frame)) ? high_rate_buffer[index + 1] : a;
+        float b = (index + 1 < (HIGH_RATE_SAMPLES)) ? high_rate_buffer[index + 1] : a;
 
         float sample = (float)((1.0 - frac) * a + frac * b);
         // convert to s16
@@ -46,7 +46,7 @@ void NonesPutSoundData(Apu *apu)
     const int minimum_audio = (4096 * sizeof(int16_t));
     if (SDL_GetAudioStreamQueued(stream) < minimum_audio)
     {
-        upsample_to_44khz(apu->buffer, apu->outbuffer, apu->odd_frame);
+        SampleTo44khz(apu->buffer, apu->outbuffer);
 
         SDL_PutAudioStreamData(stream, apu->outbuffer, sizeof(apu->outbuffer));
     }
@@ -277,19 +277,16 @@ void NonesRun(Nones *nones, const char *path)
         .timer = SDL_GetTicks(),
     };
 
-    bool paused = false;
-    bool step_frame = false;
-    bool step_instr = false;
-    double previous_time = 0;
-    double current_time = 0;
-    double accumulator = 0;
+    uint64_t previous_time = 0;
+    uint64_t current_time = 0;
+    uint64_t accumulator = 0;
 
     while (!nones->quit)
     {
         uint64_t start_time = SDL_GetTicksNS();
         previous_time = current_time;
         current_time = start_time;
-        double delta_time = current_time - previous_time;
+        uint64_t delta_time = current_time - previous_time;
         accumulator += delta_time;
 
         while (SDL_PollEvent(&event))
@@ -309,13 +306,13 @@ void NonesRun(Nones *nones, const char *path)
                             NonesReset(nones);
                             break;
                         case SDLK_F6:
-                            paused = !paused;
+                            nones->state ^= PAUSED;
                             break;
                         case SDLK_F10:
-                            step_frame = true;
+                            nones->state = STEP_FRAME;
                             break;
                         case SDLK_F11:
-                            step_instr = true;
+                            nones->state = STEP_INSTR;
                             break;
                     }
                     break;
@@ -326,12 +323,10 @@ void NonesRun(Nones *nones, const char *path)
 
         while (accumulator >= FRAME_TIME_NS)
         {
-            SystemRun(nones->system, paused, step_instr, step_frame);
-            if (step_instr | step_frame)
-            {
-                step_instr = step_frame = false;
-                paused = true;
-            }
+            SystemRun(nones->system, nones->state, nones->debug_info);
+
+            if (nones->state > PAUSED)
+                nones->state = PAUSED;
 
             accumulator -= FRAME_TIME_NS;
             ++info.updates;
@@ -348,7 +343,7 @@ void NonesRun(Nones *nones, const char *path)
 
         SDL_RenderPresent(nones->renderer);
 
-        double frame_time = SDL_GetTicksNS() - start_time;
+        uint64_t frame_time = SDL_GetTicksNS() - start_time;
         if (frame_time < FRAME_CAP_NS)
         {
             SDL_DelayNS(FRAME_CAP_NS - frame_time);

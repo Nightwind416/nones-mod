@@ -18,6 +18,13 @@ typedef enum
     IndirectY
 } AddressingMode;
 
+typedef enum
+{
+    NMI_VECTOR   = 0xFFFA,
+    RESET_VECTOR = 0xFFFC,
+    IRQ_VECTOR   = 0xFFFE
+} Vectors;
+
 typedef union
 {
     uint8_t raw;
@@ -84,7 +91,7 @@ typedef struct
     cpu->status.z = !var
 
 void CPU_Init(Cpu *cpu);
-void CPU_Update(Cpu *cpu);
+void CPU_Update(Cpu *cpu, bool debug_info);
 void CPU_Reset(Cpu *cpu);
 
 #endif

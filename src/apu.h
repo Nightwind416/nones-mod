@@ -75,7 +75,6 @@ typedef union
     };
 } ApuStatus;
 
-
 typedef union
 {
     uint8_t raw;
@@ -98,6 +97,7 @@ typedef struct
 {
     ApuFrameCounterControl control;
     int timer;
+    int reload;
     int16_t step;
     bool interrupt;
     bool reset;
@@ -157,7 +157,7 @@ typedef union
 
 typedef struct
 {
-    float buffer[29781];
+    float buffer[14890];
     int16_t outbuffer[735];
 
     uint64_t cycles;
@@ -255,7 +255,6 @@ typedef struct
     int current_sample;
     //bool clear_frame_irq;
     bool frame;
-    bool odd_frame;
 } Apu;
 
 typedef enum 
