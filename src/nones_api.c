@@ -231,7 +231,7 @@ void nones_advance_frame() {
     uint64_t start_cycles = g_nones.system->cpu->cycles;
 
     // Run one frame of emulation
-    SystemRun(g_nones.system, false, false, true);
+    SystemRun(g_nones.system, STEP_FRAME, false);
 
     // Calculate cycles executed this frame
     uint64_t executed_cycles = g_nones.system->cpu->cycles - start_cycles;

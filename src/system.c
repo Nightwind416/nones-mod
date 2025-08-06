@@ -68,14 +68,15 @@ static uint8_t SWramRead(System *system, const uint16_t addr)
     return system->cart->ram[addr & 0x1FFF];
 }
 
+static void NinjaWrite(System *system, const uint16_t addr, const uint8_t data)
+{
+    SWramWrite(system, addr, data);
+    MapperWrite(system->cart, addr, data);
+}
+
 static void SystemStartOamDma(const uint8_t page_num)
 {
     uint16_t base_addr = (page_num * 0x100);
-
-    // Older faster version
-    //uint8_t *data_ptr = SystemGetPtr(base_addr);
-    //memcpy(system_ptr->ppu->sprites, data_ptr, sizeof(Sprite) * 64);
-    //SystemAddCpuCycles(513);
 
     // Add cpu halt cycle
     SystemAddCpuCycles(1);
@@ -101,6 +102,14 @@ static void SystemStartOamDma(const uint8_t page_num)
 #endif
     }
 }
+
+typedef void (*MemMap6k)(System *system, const uint16_t addr, const uint8_t data);
+// TODO: This method of handling mem maps should be redone
+static const MemMap6k mem_map_6k[] =
+{
+    [0] = SWramWrite,
+    [1] = NinjaWrite,
+};
 
 uint8_t BusRead(const uint16_t addr)
 {
@@ -207,10 +216,10 @@ void BusWrite(const uint16_t addr, const uint8_t data)
             }
             break;
         }
-        // SRAM / WRAM
+        // SRAM / WRAM / Mapper
         // $6000 - $7FFF
         case 0x3:
-            SWramWrite(system_ptr, addr, data);
+            mem_map_6k[system_ptr->cart->mem_map](system_ptr, addr, data);
             break;
 
         case 0x4:  // $8000 - $9FFF
@@ -220,52 +229,8 @@ void BusWrite(const uint16_t addr, const uint8_t data)
             MapperWrite(system_ptr->cart, addr, data);
             break;
     }
-}
 
-// TODO: Remove
-uint8_t *SystemGetPtr(const uint16_t addr)
-{
-    // Extract A15, A14, and A13
-    uint8_t region = (addr >> 13) & 0x7;
-
-    switch (region)
-    {
-        case 0x0:  // $0000 - $1FFF
-        {
-            return &system_ptr->sys_ram[addr & 0x7FF];
-        }
-
-        case 0x2:  // $4000 - $5FFF
-            if (addr < 0x4018)
-            {
-                //return &g_apu_regs[addr % 0x18];
-                printf("Trying to read APU/IO reg at 0x%04X\n", addr);
-                break;
-            }
-            else
-            {
-                printf("Trying to read unknown (Mapper reg?) value at 0x%04X\n", addr);
-                break;  // $4018-$5FFF might be mapper-controlled
-            }
-
-
-        case 0x3:  // $6000 - $7FFF
-        {
-            return &system_ptr->cart->ram[addr & 0x1FFF];
-        }
-    
-        case 0x4:  // $8000 - $9FFF
-        case 0x5:  // $A000 - $BFFF
-        case 0x6:  // $C000 - $DFFF
-        case 0x7:  // $E000 - $FFFF
-        {
-            // Temp
-            PrgRom *prg_rom = &system_ptr->cart->prg_rom;
-            return &prg_rom->data[addr & (prg_rom->size - 1)];
-        }
-    }
-
-    return NULL; 
+    system_ptr->bus_data = data;
 }
 
 Cart *SystemGetCart(void)
@@ -303,18 +268,18 @@ void PpuBusWriteChrRam(const uint16_t addr, const uint8_t data)
 
 void PpuClockMMC3(void)
 {
-    if (system_ptr->cart->mapper_num != 4)
+    if (system_ptr->cart->mapper_num != MAPPER_MMC3)
         return;
 
     Mmc3ClockIrqCounter(system_ptr->cart);
 }
 
-void SystemRun(System *system, bool paused, bool step_instr, bool step_frame)
+void SystemRun(System *system, SystemState state, bool debug_info)
 {
-    if (paused && !step_instr && !step_frame)
+    if (state == PAUSED)
         return;
 
-    if (step_frame && system->ppu->frame_finished)
+    if (state == STEP_FRAME && system->ppu->frame_finished)
     {
         system->ppu->frame_finished = false;
         return;
@@ -323,8 +288,8 @@ void SystemRun(System *system, bool paused, bool step_instr, bool step_frame)
     system->ppu->frame_finished = false;
 
     do {
-        CPU_Update(system->cpu);
-    } while (!system->ppu->frame_finished && !step_instr);
+        CPU_Update(system->cpu, debug_info);
+    } while (!system->ppu->frame_finished && state != STEP_INSTR);
 }
 
 bool SystemPollAllIrqs(void)
@@ -347,10 +312,12 @@ void SystemPollNmi(void)
 {
     uint8_t current_nmi_pin = SystemReadNmiPin();
     if (~current_nmi_pin & system_ptr->cpu->nmi_pin)
+    {
         system_ptr->cpu->nmi_pending = true;
+        //printf("NMI falling edge at frame: %ld ppu cycle: %d scanline:%d\n",
+        //        system_ptr->ppu->frames, system_ptr->ppu->cycle_counter, system_ptr->ppu->scanline);
+    }
     system_ptr->cpu->nmi_pin = current_nmi_pin;
-    //if (system_ptr->cpu->nmi_pending)
-    //    printf("NMI falling edge at ppu cycle: %d scanline:%d\n", system_ptr->ppu->cycle_counter, system_ptr->ppu->scanline);
 }
 
 void SystemTick(void)
