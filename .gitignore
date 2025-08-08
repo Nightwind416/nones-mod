@@ -12,7 +12,3 @@ test.c
 emu
 *.o
 *.sav
-lib/*
-SDL3.dll
-nones.exe
-nones.dll
