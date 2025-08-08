@@ -1,8 +1,6 @@
 CC := gcc
-SDL3_INC := -Ilib/SDL3/include
-SDL3_LIB := -Llib/SDL3/lib
-CFLAGS := -std=c11 -Wall -Wextra -pedantic $(SDL3_INC)
-LDFLAGS := -lm -lSDL3 $(SDL3_LIB)
+CFLAGS := -std=c11 -Wall -Wextra -pedantic
+LDFLAGS := -lm -lSDL3
 REL_FLAGS := -O3 -flto=auto -D DISABLE_DEBUG -D DISABLE_CPU_LOG
 DBG_FLAGS := -ggdb -Og -D DISABLE_CPU_LOG
 # For profiling
@@ -25,7 +23,7 @@ OS_NAME ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH := $(if $(filter windows,$(OS_NAME)),x64,$(shell uname -m))
 
 BIN := nones
-VERSION := 0.2.0
+VERSION := 0.3.0
 ARCHIVE_FMT ?= .tar.gz
 ARCHIVE := $(BIN)-$(VERSION)-$(OS_NAME)-$(ARCH)$(ARCHIVE_FMT)
 
