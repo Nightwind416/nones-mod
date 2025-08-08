@@ -23,9 +23,7 @@ OS_NAME ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH := $(if $(filter windows,$(OS_NAME)),x64,$(shell uname -m))
 
 BIN := nones
-VERSION := 0.3.0
-ARCHIVE_FMT ?= .tar.gz
-ARCHIVE := $(BIN)-$(VERSION)-$(OS_NAME)-$(ARCH)$(ARCHIVE_FMT)
+VERSION := 0.3.0-mod
 
 SRCS := $(wildcard src/*.c)
 OBJS := $(SRCS:src/%.c=%.o)
@@ -40,10 +38,11 @@ REL_OBJS := $(addprefix $(REL_DIR)/, $(OBJS))
 REL_BIN := $(REL_DIR)/$(BIN)
 DBG_BIN := $(DBG_DIR)/$(BIN)
 
+# Compiler and flags
+.PHONY: all clean build-dll build-exe build-all debug run
 
-.PHONY: all clean release debug run tarball win_zip
-
-all: release
+# Default target: clean, build DLL, build executable
+all: clean build-all
 
 release: $(REL_BIN) build/release/nones.dll
 ifeq ($(OS_NAME), windows)
@@ -52,8 +51,6 @@ else
 	copy /Y $(subst /,\\,$<) $(BIN)
 endif
 	copy /Y lib\SDL3\bin\SDL3.dll SDL3.dll
-
-dll: build/release/nones.dll
 
 $(REL_BIN): $(REL_OBJS)
 	$(CC) $(REL_FLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -81,41 +78,28 @@ $(DBG_DIR)/%.o: src/%.c
 	@if not exist $(subst /,\\,$(DBG_DIR)) mkdir $(subst /,\\,$(DBG_DIR))
 	$(CC) $(DBG_FLAGS) $(CFLAGS) -c -o $@ $<
 
+# command: make run ROM=path/to/rom.nes
 run:
-	$(BIN)
-
-ifeq ($(POSIX),1)
-	@if [ -d "$(BUILD_DIR)" ]; then rm -r $(BUILD_DIR); else echo 'Nothing to clean up'; fi
-	@if [ -f "$(BIN)" ]; then rm $(BIN); fi
-	@if [ -f "$(ARCHIVE)" ]; then rm $(ARCHIVE); fi
-	@if [ -f "SDL3.dll" ]; then rm "SDL3.dll"; fi
-
-tarball:
-	@if [ -f "$(BIN)" ]; then \
-		strip $(BIN); \
-		tar -czf $(ARCHIVE) $(BIN) "LICENSE" "README.md"; \
-		echo "Created tarball $(ARCHIVE)..."; \
-	else \
-		echo "Please run 'make' before creating a tarball."; \
-	fi
+ifndef ROM
+	@echo Usage: make run ROM=path/to/rom.nes
+	@exit 1
+else
+	$(BIN) "$(ROM)"
 endif
 
-# Release variants
-release-dll: build/release/nones.dll
+clean:
+	if exist $(BUILD_DIR) rmdir /S /Q $(BUILD_DIR)
+	if exist $(BIN).exe del /Q $(BIN).exe
+	if exist SDL3.dll del /Q SDL3.dll
+	if exist nones.dll del /Q nones.dll
+
+# build variants
+build-dll: build/release/nones.dll
 	copy /Y $(subst /,\\,$<) nones.dll
 
-release-exe: $(REL_BIN)
+build-exe: $(REL_BIN)
 	copy /Y $(subst /,\\,$<).exe $(BIN).exe
 	copy /Y lib\SDL3\bin\SDL3.dll SDL3.dll
 
-release-all: release-dll release-exe
+build-all: build-dll build-exe
 	@echo "All release targets built successfully"
-
-win_zip:
-	@if [ -f "$(BIN)" ]; then \
-		strip $(BIN).exe; \
-		7z a $(ARCHIVE) $(BIN).exe "SDL3.dll" "LICENSE" "README.md"; \
-		echo "Created zip $(ARCHIVE)..."; \
-	else \
-		echo "Please run 'make' before creating a zip."; \
-	fi

@@ -61,9 +61,6 @@ NONES_API void nones_set_save_path(const char* save_path);
 // Save SRAM to file (uses custom path if set)
 NONES_API int nones_save_sram();
 
-// Load SRAM from file (uses custom path if set)
-NONES_API int nones_load_sram();
-
 // Get audio latency information
 NONES_API void nones_get_audio_latency_info(float* buffer_ms, int* samples_available);
 

@@ -12,3 +12,6 @@ test.c
 emu
 *.o
 *.sav
+nones.dll
+nones.exe
+SDL3.dll

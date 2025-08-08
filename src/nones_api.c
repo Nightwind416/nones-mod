@@ -442,19 +442,6 @@ int nones_save_sram() {
     return 0;
 }
 
-// Load SRAM from file
-int nones_load_sram() {
-    if (!g_nones.system || !g_nones.system->cart || !g_nones.system->cart->battery) return 1;
-    char save_path[256];
-    get_sram_save_path(save_path, sizeof(save_path));
-    if (!save_path[0]) return 2;
-    FILE *sav = fopen(save_path, "rb");
-    if (!sav) return 3;
-    fread(g_nones.system->cart->ram, CART_RAM_SIZE, 1, sav);
-    fclose(sav);
-    return 0;
-}
-
 // Performs a soft reset of the emulator (resets CPU, PPU, etc. without reloading ROM).
 void nones_soft_reset(void) {
     if (g_nones.system) {
