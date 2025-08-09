@@ -37,6 +37,7 @@ static atomic_bool g_realtime_running = false;
 static SDL_Thread *g_realtime_thread = NULL;
 static SDL_Mutex *g_audio_mutex = NULL;
 static SDL_Mutex *g_video_mutex = NULL;
+static atomic_bool g_paused = false; // soft pause flag
 
 // Audio ring buffer for smooth playback - increased size for better buffering
 #define AUDIO_RING_SIZE (44100 * 4)  // 4 seconds of audio buffer for better stability
@@ -54,6 +55,8 @@ static uint64_t g_last_fps_time = 0;
 static uint32_t g_fps_counter = 0;
 static float g_current_fps = 0.0f;
 static uint32_t g_audio_underruns = 0;
+// Timing accumulator reset flag to indicate a fresh start (prevents burst after pause)
+static atomic_bool g_reset_timing = false;
 
 // Controller input state
 static uint8_t g_controller_state[2] = {0, 0};
@@ -94,49 +97,53 @@ static int realtime_emulation_thread(void *data) {
     // Set high thread priority for better timing (SDL3 function name)
     SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_TIME_CRITICAL);
 
-    // Use proper NES timing - 60 FPS for emulation, not the 500 FPS cap
-    const uint64_t frame_time_ns = 1000000000ULL / 60; // ~16.67ms per frame
+    // NES nominal frame time (~16.67ms)
+    const uint64_t frame_time_ns = 1000000000ULL / 60;
 
-    double previous_time = 0;
-    double current_time = 0;
-    double accumulator = 0;
+    // Properly initialize timing so first delta isn't huge (which caused resume speed burst)
+    uint64_t previous_time = SDL_GetTicksNS();
+    uint64_t current_time = previous_time;
+    double accumulator = 0.0;
 
     while (atomic_load(&g_realtime_running)) {
-        uint64_t start_time = SDL_GetTicksNS();
+        current_time = SDL_GetTicksNS();
+        uint64_t delta_time = current_time - previous_time;
         previous_time = current_time;
-        current_time = start_time;
-        double delta_time = current_time - previous_time;
-        accumulator += delta_time;
+        if (atomic_exchange(&g_reset_timing, false)) {
+            // Fresh start: discard any large delta; keep accumulator zero
+            delta_time = frame_time_ns; // treat as exactly one frame spacing
+            accumulator = 0.0;
+        }
+        accumulator += (double)delta_time;
 
-        // Run emulation frames using accumulator (same as standalone)
+        // Run whole frames while accumulator has enough time; never loop runaway on first frame anymore
         while (accumulator >= frame_time_ns) {
-            // Run one frame of emulation
-            nones_advance_frame();
-
-            // Copy audio samples to ring buffer
-            if (g_nones.system && g_nones.system->apu) {
-                write_audio_samples(g_nones.system->apu->outbuffer, 735);
+            if (!atomic_load(&g_paused)) {
+                nones_advance_frame();
+                if (g_nones.system && g_nones.system->apu) {
+                    write_audio_samples(g_nones.system->apu->outbuffer, 735);
+                }
+                atomic_store(&g_new_frame_available, true);
+                g_frame_counter++;
+            } else {
+                // While paused we still want to keep accumulator bounded so it doesn't explode
+                // but we purposely do NOT advance emulation or push audio.
             }
-
-            // Mark new frame as available
-            atomic_store(&g_new_frame_available, true);
-            g_frame_counter++;
-
             accumulator -= frame_time_ns;
         }
 
-        // Update FPS counter
+        // FPS accounting once per second
         g_fps_counter++;
-        if (current_time - g_last_fps_time >= 1000000000ULL) { // 1 second
+        if (current_time - g_last_fps_time >= 1000000000ULL) {
             g_current_fps = (float)g_fps_counter;
             g_fps_counter = 0;
             g_last_fps_time = current_time;
         }
 
-        // Proper frame limiting - limit to 60 FPS, not 500 FPS
-        double frame_time = SDL_GetTicksNS() - start_time;
-        if (frame_time < frame_time_ns) {
-            SDL_DelayNS(frame_time_ns - frame_time);
+        // Sleep remaining slice to hold 60 FPS
+        uint64_t frame_elapsed = SDL_GetTicksNS() - current_time;
+        if (frame_elapsed < frame_time_ns) {
+            SDL_DelayNS(frame_time_ns - frame_elapsed);
         }
     }
 
@@ -154,11 +161,12 @@ void nones_run_realtime() {
         g_video_mutex = SDL_CreateMutex();
     }
 
-    // Reset timing counters
+    // Reset timing & performance counters
     g_last_fps_time = SDL_GetTicksNS();
     g_fps_counter = 0;
     g_current_fps = 0.0f;
     g_audio_underruns = 0;
+    atomic_store(&g_reset_timing, true);
 
     // Clear audio buffer for clean start
     atomic_store(&g_audio_write_pos, 0);
@@ -185,6 +193,24 @@ void nones_stop_realtime() {
         SDL_DestroyMutex(g_video_mutex);
         g_video_mutex = NULL;
     }
+}
+
+// Soft pause: stop advancing frames but keep thread & clocks alive
+void nones_pause() {
+    if (!g_realtime_thread) return; // Not running
+    atomic_store(&g_paused, true);
+    // Also reflect pause in underlying Nones struct state the same way the standalone F6 toggle does
+    g_nones.state = PAUSED;
+}
+
+// Resume from soft pause, resetting timing accumulator subtly so we don't burst
+void nones_resume() {
+    if (!g_realtime_thread) return; // Not running
+    // Set timing reset so first loop iteration discards any accumulated delta
+    atomic_store(&g_reset_timing, true);
+    atomic_store(&g_paused, false);
+    // Restore to RUNNING (continuous) state just like normal emulator loop
+    g_nones.state = RUNNING;
 }
 
 // Advance the emulator by one frame (for DLL/headless use)
@@ -230,8 +256,10 @@ void nones_advance_frame() {
     // Track cycles at start of frame
     uint64_t start_cycles = g_nones.system->cpu->cycles;
 
-    // Run one frame of emulation
-    SystemRun(g_nones.system, STEP_FRAME, false);
+    // Run one frame of emulation using the regular RUNNING state semantics so that
+    // pause behavior matches the standalone F6 implementation (PAUSED short‑circuits in SystemRun).
+    // We intentionally use RUNNING instead of STEP_FRAME so we do not implicitly force a PAUSED state afterwards.
+    SystemRun(g_nones.system, RUNNING, false);
 
     // Calculate cycles executed this frame
     uint64_t executed_cycles = g_nones.system->cpu->cycles - start_cycles;

@@ -37,6 +37,10 @@ NONES_API void nones_run_realtime();
 // Stop the real-time emulation loop started by nones_run_realtime.
 NONES_API void nones_stop_realtime();
 
+// Pause/resume the real-time loop without destroying the thread (preserves timing state)
+NONES_API void nones_pause();
+NONES_API void nones_resume();
+
 // Get the current audio buffer fill level (0.0 to 1.0)
 NONES_API float nones_get_audio_buffer_level();
 
