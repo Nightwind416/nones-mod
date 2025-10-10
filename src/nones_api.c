@@ -1,6 +1,7 @@
 #include "cart.h"
 #include "system.h"
 #include "nones.h"
+#include "ppu.h"
 #include <stdio.h>
 #include "nones_api.h"
 #include <stdlib.h>
@@ -60,6 +61,9 @@ static atomic_bool g_reset_timing = false;
 
 // Controller input state
 static uint8_t g_controller_state[2] = {0, 0};
+
+// Sprite rendering override (API-level persistent flag)
+static bool g_force_disable_sprites = false;
 
 // Helper function to get available audio samples in ring buffer
 static size_t get_audio_samples_available() {
@@ -274,6 +278,11 @@ void nones_advance_frame() {
         // Add missing cycles and update APU accordingly
         SystemAddCpuCycles(missing_cycles);
     }
+
+    // Apply sprite rendering override if active (prevents game from re-enabling sprites)
+    if (g_force_disable_sprites && g_nones.system->ppu) {
+        g_nones.system->ppu->mask.sprites_rendering = 0;
+    }
 }
 
 // Return pointer to current video frame (RGBA8888), set width/height
@@ -475,4 +484,25 @@ void nones_soft_reset(void) {
     if (g_nones.system) {
         SystemReset(g_nones.system);
     }
+}
+
+// Temporarily override sprite rendering (for clean background screenshots)
+void nones_set_sprite_rendering(int enabled) {
+    if (!g_nones.system || !g_nones.system->ppu) return;
+
+    // Set persistent override flag
+    g_force_disable_sprites = !enabled;
+
+    // Apply immediately to current PPU state
+    if (g_force_disable_sprites) {
+        g_nones.system->ppu->mask.sprites_rendering = 0;
+    }
+}
+
+// Get current sprite rendering state
+int nones_get_sprite_rendering() {
+    if (!g_nones.system || !g_nones.system->ppu) return 0;
+
+    // Return inverse of override flag (true = sprites enabled)
+    return !g_force_disable_sprites;
 }

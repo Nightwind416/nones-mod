@@ -71,6 +71,12 @@ NONES_API void nones_get_audio_latency_info(float* buffer_ms, int* samples_avail
 // Performs a soft reset of the emulator (resets CPU, PPU, etc. without reloading ROM).
 NONES_API void nones_soft_reset(void);
 
+// Temporarily override sprite rendering (for clean background screenshots)
+NONES_API void nones_set_sprite_rendering(int enabled);
+
+// Get current sprite rendering state
+NONES_API int nones_get_sprite_rendering();
+
 #ifdef __cplusplus
 }
 #endif
