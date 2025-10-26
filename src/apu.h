@@ -69,7 +69,7 @@ typedef union
         uint8_t triangle : 1;
         uint8_t noise : 1;
         uint8_t dmc : 1;
-        uint8_t : 1;
+        uint8_t open_bus : 1;
         uint8_t frame_irq : 1;
         uint8_t dmc_irq : 1;
     };
@@ -98,6 +98,7 @@ typedef struct
     ApuFrameCounterControl control;
     int timer;
     int reload;
+    int reset_delay;
     int16_t step;
     bool interrupt;
     bool reset;
@@ -159,10 +160,7 @@ typedef struct
 {
     float buffer[14890];
     int16_t outbuffer[735];
-
     uint64_t cycles;
-    int64_t prev_cpu_cycles;
-    int32_t cycles_to_run;
 
     struct {
         ApuPulseReg reg;
@@ -172,7 +170,6 @@ typedef struct
         // Internal timer
         ApuTimer timer;
         ApuEnvelope envelope;
-        uint16_t freq;
         bool reload;
         uint16_t sweep_counter;
         uint16_t target_period;
@@ -190,7 +187,6 @@ typedef struct
         ApuTimer timer_period;
         ApuTimer timer;
         ApuEnvelope envelope;
-        uint16_t freq;
         bool reload;
         uint16_t sweep_counter;
         uint16_t target_period;
@@ -250,11 +246,8 @@ typedef struct
 
     float mixed_sample;
     int alignment;
-    int delay;
-    //int clear_frame_irq_delay;
     int current_sample;
-    //bool clear_frame_irq;
-    bool frame;
+    bool clear_frame_irq;
 } Apu;
 
 typedef enum 
@@ -300,11 +293,11 @@ typedef struct
 #define APU_STATUS 0x4015
 #define APU_FRAME_COUNTER 0x4017
 
-uint8_t ReadAPURegister(Apu *apu, const uint16_t addr);
+uint8_t ApuReadStatus(Apu *apu, const uint8_t bus_data);
 void WriteAPURegister(Apu *apu, const uint16_t addr, const uint8_t data);
 bool PollApuIrqs(Apu *apu);
+void ApuDmcDmaUpdate(Apu *apu);
 void APU_Init(Apu *apu);
-void APU_Update(Apu *apu, uint64_t cpu_cycles);
 void APU_Tick(Apu *apu);
 void APU_Reset(Apu *apu);
 

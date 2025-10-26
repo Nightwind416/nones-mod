@@ -53,14 +53,6 @@ static const uint8_t duty_cycle_table[4][8] =
     { 1, 1, 1, 1, 1, 1, 0, 0 }
 };
 
-static const uint8_t duty_cycle_table1[4][8] =
-{
-    { 0, 1, 0, 0, 0, 0, 0, 0 },
-    { 0, 1, 1, 0, 0, 0, 0, 0 },
-    { 0, 1, 1, 1, 1, 0, 0, 0 },
-    { 1, 0, 0, 1, 1, 1, 1, 1 }
-};
-
 static const uint8_t triangle_table[32] =
 {
     15, 14, 13, 12, 11, 10,  9,  8, 
@@ -75,13 +67,11 @@ static const uint16_t noise_table[16] =
     101, 127, 190, 254, 381, 508, 1017, 2034
 };
 
-// 428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106,  84,  72,  54
-static const uint16_t dmc_table[16] =
+// 428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84,  72,  54
+static const uint8_t dmc_table[16] =
 {
-    //214, 190, 170, 160, 143, 127, 113, 107,
-    //95,  80,  71,  64,  53,  42,  36,  27
-    428, 380, 340, 320, 286, 254, 226, 214,
-    190, 160, 142, 128, 106,  84,  72,  54
+    214, 190, 170, 160, 143, 127, 113, 107,
+    95,  80,  71,  64,  53,  42,  36,  27
 };
 
 bool PollApuIrqs(Apu *apu)
@@ -99,11 +89,7 @@ static void ApuWritePulse1Duty(Apu *apu, const uint8_t data)
     //printf("Set pulse 1 volume/envelope: %d\n", apu->pulse1.reg.volume_env);
     //printf("Set pulse 1 constant volume/envelope: %d\n", apu->pulse1.reg.constant_volume);
     //printf("Set pulse 1 counter halt/envelope loop: %d\n", apu->pulse1.reg.counter_halt);
-
-    apu->pulse1.freq = roundf(FCPU / (16 * (apu->pulse1.timer_period.raw + 1)));
-
-    //printf("Pulse 1 freq: %d\n",  (uint16_t)(FCPU / (16 * (apu->pulse1.timer.raw + 1))));
-    //printf("Pulse 1 freq: %d\n", apu->pulse1.freq);
+    //printf("Pulse 1 freq: %f\n",  roundf(FCPU / (16 * (apu->pulse1.timer_period.raw + 1))));
 }
 
 static void ApuWritePulse2Duty(Apu *apu, const uint8_t data)
@@ -114,7 +100,7 @@ static void ApuWritePulse2Duty(Apu *apu, const uint8_t data)
     //printf("Set pulse 2 volume/envelope: %d\n", apu->pulse2.reg.volume_env);
     //printf("Set pulse 2 constant volume/envelope: %d\n", apu->pulse2.reg.constant_volume);
     //printf("Set pulse 2 counter halt/envelope loop: %d\n", apu->pulse2.reg.counter_halt);
-    apu->pulse2.freq = roundf(FCPU / (16 * (apu->pulse2.timer_period.raw + 1)));
+    //printf("Pulse 2 freq: %f\n",  roundf(FCPU / (16 * (apu->pulse2.timer_period.raw + 1))));
 }
 
 static void ApuWritePulse1LengthCounter(Apu *apu, const uint8_t data)
@@ -461,9 +447,9 @@ static void ApuClockDmc(Apu *apu)
         // The right shift register is clocked.
         apu->dmc.shift_reg >>= 1;
 
-        if (!(--apu->dmc.bits_remaining))
+        if (!(apu->dmc.bits_remaining--))
         {
-            apu->dmc.bits_remaining = 8;
+            apu->dmc.bits_remaining = 7;
             // Output cycle ending
             // If the sample buffer is empty, then the silence flag is set;
             // otherwise, the silence flag is cleared and the sample buffer is emptied into the shift register.
@@ -484,6 +470,7 @@ static void ApuClockDmc(Apu *apu)
 static void ApuResetFrameCounter(Apu *apu)
 {
     apu->frame_counter.reload = apu->frame_counter.control.seq_mode ? 37282 : 29830;
+    apu->frame_counter.reset_delay = 2;
     apu->frame_counter.step = 0;
     apu->frame_counter.timer = 0;
     apu->frame_counter.reset = false;
@@ -506,10 +493,6 @@ static void ApuWriteFrameCounter(Apu *apu, const uint8_t data)
     apu->frame_counter.control.raw = data;
     apu->frame_counter.reset = true;
 
-    // "Put" cycles are odd, "Get" cycles are even
-    const bool put_cycle = apu->cycles & 1;
-    apu->delay = 3 + put_cycle;
-
     // Seems correct
     if (apu->frame_counter.control.irq_inhibit)
     {
@@ -520,7 +503,7 @@ static void ApuWriteFrameCounter(Apu *apu, const uint8_t data)
 static void ApuWritePulse1Sweep(Apu *apu, const uint8_t data)
 {
     apu->pulse1.sweep_reg.raw = data;
-    apu->pulse1.reload = 1;
+    apu->pulse1.reload = true;
     UpdateTargetPeriod1(apu);
 
     //printf("Set pulse 1 sweep enabled: %d\n", apu->pulse1.sweep_reg.enabled);
@@ -532,7 +515,7 @@ static void ApuWritePulse1Sweep(Apu *apu, const uint8_t data)
 static void ApuWritePulse2Sweep(Apu *apu, const uint8_t data)
 {
     apu->pulse2.sweep_reg.raw = data;
-    apu->pulse2.reload = 1;
+    apu->pulse2.reload = true;
     UpdateTargetPeriod2(apu);
 
     //printf("Set pulse 2 sweep enabled: %d\n", apu->pulse2.sweep.enabled);
@@ -548,32 +531,9 @@ static void ApuDmcWriteSampleAddr(Apu *apu, const uint8_t data)
 }
 
 // DMC DMA
-static void ApuUpdateDmcSample(Apu *apu)
+void ApuDmcDmaUpdate(Apu *apu)
 {
-#ifndef DISABLE_CYCLE_ACCURACY
-    // Halt and dummy cycle
-    SystemAddCpuCycles(2);
-    apu->cycles_to_run += 2;
-    PPU_Tick(SystemGetPpu());
-    PPU_Tick(SystemGetPpu());
-
-    // If DMA tries to get on a put cycle, it waits and tries again next cycle. This wait is called an alignment cycle.
-    if (apu->cycles & 1)
-    {
-        SystemAddCpuCycles(1);
-        ++apu->cycles_to_run;
-        PPU_Tick(SystemGetPpu());
-    }
-
     apu->dmc.sample_buffer = BusRead(apu->dmc.addr_counter);
-    SystemAddCpuCycles(1);
-    ++apu->cycles_to_run;
-    PPU_Tick(SystemGetPpu());
-#else
-    apu->dmc.sample_buffer = BusRead(apu->dmc.addr_counter);
-    SystemAddCpuCycles(4);
-#endif
-
     apu->dmc.empty = false;
     apu->dmc.addr_counter = MAX(0x8000, (apu->dmc.addr_counter + 1) & 0xFFFF);
 
@@ -668,31 +628,24 @@ void WriteAPURegister(Apu *apu, const uint16_t addr, const uint8_t data)
     }
 }
 
-static uint8_t ApuReadStatus(Apu *apu)
+uint8_t ApuReadStatus(Apu *apu, const uint8_t bus_data)
 {
-    ApuStatus status = apu->status;
-    apu->status.frame_irq = 0;
+    ApuStatus status = {
+        .pulse1 = apu->pulse1.length_counter != 0,
+        .pulse2 = apu->pulse2.length_counter != 0,
+        .triangle = apu->triangle.length_counter != 0,
+        .noise = apu->noise.length_counter != 0,
+        .dmc = apu->dmc.bytes_remaining != 0,
+        .open_bus = bus_data >> 5,
+        .frame_irq = apu->status.frame_irq,
+        .dmc_irq = apu->status.dmc_irq
+    };
 
-    status.pulse1 = apu->pulse1.length_counter != 0;
-    status.pulse2 = apu->pulse2.length_counter != 0;
-    status.triangle = apu->triangle.length_counter != 0;
-    status.noise = apu->noise.length_counter != 0;
-    status.dmc = apu->dmc.bytes_remaining != 0;
+    apu->clear_frame_irq = true;
 
     //printf("Timer Period value: %d\n", apu->dmc.timer_period);
+    //printf("Dmc bytes remaining: %d\n", apu->dmc.bytes_remaining);
     return status.raw;
-}
-
-uint8_t ReadAPURegister(Apu *apu, const uint16_t addr)
-{
-    switch (addr)
-    {
-        case APU_STATUS:
-            return ApuReadStatus(apu);
-        default:
-            //printf("Reading from open bus at addr: 0x%04X\n", addr);
-            return SystemReadOpenBus();
-    }
 }
 
 static void ApuClockTimers(Apu *apu)
@@ -775,34 +728,29 @@ static void ApuMixSample(Apu *apu)
     apu->mixed_sample = pulse + tnd_out;
 }
 
-void APU_Init(Apu *apu)
-{
-    memset(apu, 0, sizeof(*apu));
-    ApuResetFrameCounter(apu);
-    apu->noise.shift_reg.raw = 1;
-    apu->dmc.sample_length = 1;
-    apu->dmc.empty = true;
-    apu->alignment = 0;
-}
-
 static void ApuGetClock(Apu *apu)
 {
-    //if (apu->clear_frame_irq && !(apu->clear_frame_irq_delay--))
-    //{
-    //    apu->status.frame_irq = 0;
-    //    apu->clear_frame_irq = false;
-    //    apu->clear_frame_irq_delay = 0;
-    //}
+    if (apu->dmc.restart)
+    {
+        ApuResetSample(apu);
+    }
+
+    apu->status.frame_irq &= !apu->clear_frame_irq;
+    apu->clear_frame_irq = false;
+
+    if (apu->frame_counter.reset)
+    {
+        if (!(--apu->frame_counter.reset_delay))
+        {
+            ApuResetFrameCounter(apu);
+        }
+    }
 }
 
 static void ApuPutClock(Apu *apu)
 {
-    if (apu->dmc.empty && apu->dmc.bytes_remaining)
-    {
-        ApuUpdateDmcSample(apu);
-    }
-
     ApuClockTimers(apu);
+    ApuClockDmc(apu);
     ApuMixSample(apu);
 
     if (apu->current_sample == 14890)
@@ -816,79 +764,62 @@ static void ApuPutClock(Apu *apu)
 
 void APU_Tick(Apu *apu)
 {
-    ++apu->cycles_to_run;
+    SequenceStep step = sequence_table[apu->frame_counter.control.seq_mode][apu->frame_counter.step];
 
-    while (apu->cycles_to_run != 0)
+    if (apu->dmc.empty && apu->dmc.bytes_remaining && apu->status.dmc)
     {
-        SequenceStep step = sequence_table[apu->frame_counter.control.seq_mode][apu->frame_counter.step];
-
-        if (apu->dmc.restart)
-        {
-            ApuResetSample(apu);
-        }
-
-        if (apu->frame_counter.reset)
-        {
-            if (!(--apu->delay))
-            {
-                ApuResetFrameCounter(apu);
-            }
-        }
-
-        if (apu->frame_counter.timer == step.cycles)
-        {
-            //printf("Sequencer: Framecounter called on cycle: %d cpu cycle: %ld\n", apu->frame_counter.timer, apu->cycles);
-            if (step.event == SEQ_CLOCK_QUARTER_FRAME)
-            {
-                ApuClockEnvelopes(apu);
-                ApuClockLinearCounters(apu);
-            }
-            else if (step.event == SEQ_CLOCK_HALF_FRAME)
-            {
-                // Half-frame includes quarter frame stuff
-                ApuClockEnvelopes(apu);
-                ApuClockLinearCounters(apu);
-                ApuClockLengthCounters(apu);
-                ApuClockSweeps(apu);
-            }
-
-            if (step.frame_interrupt)
-            {
-                apu->status.frame_irq |= ~apu->frame_counter.control.irq_inhibit;
-            }
-
-            apu->frame_counter.step = (apu->frame_counter.step + 1) % 6;
-        }
-
-        ApuClockTriangle(apu);
-        // TODO: Dmc clocking is actually done once per apu cycle, not once per cpu cycle
-        ApuClockDmc(apu);
-
-        if (!((apu->cycles & 1) + apu->alignment))
-        {
-            ApuGetClock(apu);
-        }
-        else
-        {
-            ApuPutClock(apu);
-        }
-
-        apu->frame_counter.timer %= apu->frame_counter.reload;
-        ++apu->frame_counter.timer;
-        ++apu->cycles;
-        --apu->cycles_to_run;
+        SystemSignalDmcDma();
     }
+
+    if (apu->frame_counter.timer == step.cycles)
+    {
+        //printf("Sequencer: Framecounter called on cycle: %d cpu cycle: %ld\n", apu->frame_counter.timer, apu->cycles);
+        if (step.event == SEQ_CLOCK_QUARTER_FRAME)
+        {
+            ApuClockEnvelopes(apu);
+            ApuClockLinearCounters(apu);
+        }
+        else if (step.event == SEQ_CLOCK_HALF_FRAME)
+        {
+            // Half-frame includes quarter frame stuff
+            ApuClockEnvelopes(apu);
+            ApuClockLinearCounters(apu);
+            ApuClockLengthCounters(apu);
+            ApuClockSweeps(apu);
+        }
+        if (step.frame_interrupt)
+        {
+            apu->status.frame_irq |= ~apu->frame_counter.control.irq_inhibit;
+            // Don't overwrite the newly set frame irq flag
+            apu->clear_frame_irq = false;
+        }
+        apu->frame_counter.step = (apu->frame_counter.step + 1) % 6;
+    }
+
+    ApuClockTriangle(apu);
+
+    if (!((apu->cycles & 1) + apu->alignment))
+    {
+        ApuGetClock(apu);
+    }
+    else
+    {
+        ApuPutClock(apu);
+    }
+
+    apu->frame_counter.timer %= apu->frame_counter.reload;
+    ++apu->frame_counter.timer;
+    ++apu->cycles;
 }
 
-void APU_Update(Apu *apu, uint64_t cpu_cycles)
+void APU_Init(Apu *apu)
 {
-    // Get the delta of cycles since the last the last tick
-    int64_t cpu_cycles_delta = cpu_cycles - apu->cycles;
-    // Calculate how many apu ticks we need to run
-    apu->cycles_to_run = MAX(-1, (cpu_cycles_delta + apu->cycles_to_run) - 1);
-    //if (apu->cycles_to_run > -1)
-    //    printf("Syncing of %d Apu cycles\n", apu->cycles_to_run + 1);
-    APU_Tick(apu);
+    memset(apu, 0, sizeof(*apu));
+    ApuResetFrameCounter(apu);
+    apu->noise.shift_reg.raw = 1;
+    apu->dmc.sample_length = 1;
+    apu->dmc.empty = true;
+    apu->alignment = 0;
 }
 
 void APU_Reset(Apu *apu)
@@ -896,7 +827,6 @@ void APU_Reset(Apu *apu)
     ApuWriteStatus(apu, 0x0);
     ApuResetFrameCounter(apu);
     apu->cycles = 0;
-    apu->cycles_to_run = 0;
     apu->noise.shift_reg.raw = 1;
     apu->dmc.sample_length = 1;
     apu->dmc.empty = true;

@@ -1,15 +1,16 @@
-#include "cart.h"
-#include "system.h"
-#include "nones.h"
-#include "ppu.h"
+#include <SDL3/SDL.h>
+#include <stdatomic.h>
 #include <stdio.h>
-#include "nones_api.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
 
-#include <SDL3/SDL.h>
-#include <stdatomic.h>
+#include "arena.h"
+#include "cart.h"
+#include "system.h"
+#include "nones.h"
+#include "ppu.h"
+#include "nones_api.h"
 
 // Global emulator instance
 static Nones g_nones;
@@ -273,7 +274,7 @@ void nones_advance_frame() {
         uint64_t missing_cycles = 29780 - executed_cycles;
         // Only log if significant difference (>100 cycles)
         if (missing_cycles > 100) {
-            printf("[nones_advance_frame] Adding %llu missing cycles\n", missing_cycles);
+            printf("[nones_advance_frame] Adding %lu missing cycles\n", (unsigned long)missing_cycles);
         }
         // Add missing cycles and update APU accordingly
         SystemAddCpuCycles(missing_cycles);
@@ -446,10 +447,11 @@ int nones_load_rom(const char* path) {
     if (result == 0) {
         // Set up PPU/APU/CPU and video buffers
         static uint32_t* buffers[2] = {NULL, NULL};
+        const uint32_t buffer_size = (SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint32_t));
         // Allocate two frame buffers if not already done
-        if (!buffers[0]) buffers[0] = malloc(SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint32_t));
-        if (!buffers[1]) buffers[1] = malloc(SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint32_t));
-        SystemInit(g_nones.system, buffers);
+        if (!buffers[0]) buffers[0] = malloc(buffer_size);
+        if (!buffers[1]) buffers[1] = malloc(buffer_size);
+        SystemInit(g_nones.system, buffers, buffer_size);
     }
     return result;
 }

@@ -1,10 +1,6 @@
 #ifndef CART_H
 #define CART_H
 
-#include <stdint.h>
-#include <stdbool.h>
-#include "arena.h"
-
 #define HEADER_SIZE 16
 
 typedef struct
@@ -60,6 +56,30 @@ typedef union
     uint8_t raw : 5;
     struct
     {
+        uint8_t bit0 : 1;
+        uint8_t bit1 : 1;
+        uint8_t bit2 : 1;
+        uint8_t bit3 : 1;
+        uint8_t bit4 : 1;
+    };
+} Mmc1ShiftReg;
+
+typedef union
+{
+    uint8_t raw;
+    struct
+    {
+        uint8_t data : 1;
+        uint8_t : 6;
+        uint8_t reset : 1;
+    };
+} Mmc1LoadReg;
+
+typedef union
+{
+    uint8_t raw : 5;
+    struct
+    {
         // Nametable arrangement:
         // 0: one-screen, lower bank;
         // 1: one-screen, upper bank;
@@ -92,29 +112,7 @@ typedef union
 
 } Mmc1PrgBankReg;
 
-
-// --- Mmc1ShiftReg and Mmc1LoadReg missing typedefs ---
-typedef union {
-    uint8_t raw : 5;
-    struct {
-        uint8_t bit0 : 1;
-        uint8_t bit1 : 1;
-        uint8_t bit2 : 1;
-        uint8_t bit3 : 1;
-        uint8_t bit4 : 1;
-    };
-} Mmc1ShiftReg;
-
-typedef union {
-    uint8_t raw;
-    struct {
-        uint8_t data : 1;
-        uint8_t : 6;
-        uint8_t reset : 1;
-    };
-} Mmc1LoadReg;
-
-typedef struct
+typedef struct 
 {
     uint16_t shift_count;
     Mmc1ShiftReg shift;
@@ -169,7 +167,7 @@ typedef union
 
 } Mmc3PrgRamReg;
 
-typedef struct
+typedef struct 
 {
     uint8_t regs[8];
     Mmc3BankReg bank_sel;
