@@ -116,7 +116,7 @@ static void SystemStartOamDma(System *system, const uint8_t page_num, const uint
             ApuDmcDmaUpdate(system->apu);
             system->dmc_dma_triggered = false;
         }
-        else if (system_ptr->dmc_dma_triggered && system_ptr->oam_dma_bytes_remaining == 2)
+        else if (system->dmc_dma_triggered && system->oam_dma_bytes_remaining == 2)
         {
             single_dma_cycle = true;
         }
