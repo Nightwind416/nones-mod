@@ -9,6 +9,7 @@
 #include "ppu.h"
 #include "cpu.h"
 #include "mapper.h"
+#include "system.h"
 
 #include "utils.h"
 
@@ -20,6 +21,7 @@ CnRom cn_rom;
 ColorDreams color_dreams;
 Ninja ninja;
 BnRom bn_rom;
+Nanjing nanjing;
 
 static const uint16_t mmc1_chr_bank_sizes[2] = 
 {
@@ -29,6 +31,11 @@ static const uint16_t mmc1_chr_bank_sizes[2] =
 static uint8_t NromReadPrgRom(Cart *cart, uint16_t addr)
 {
     return cart->prg_rom.data[addr & cart->prg_rom.mask];
+}
+
+static void ChrWriteGeneric(Cart *cart, const uint16_t addr, const uint8_t data)
+{
+    cart->chr_rom.data[addr & cart->chr_rom.mask] = data;
 }
 
 static inline int GetNumPrgRomBanks(const uint32_t prg_rom_size, const uint16_t bank_size)
@@ -214,9 +221,16 @@ static uint8_t BnRomReadPrgRom(Cart *cart, const uint16_t addr)
     return cart->prg_rom.data[final_addr];
 }
 
+static uint8_t NanjingReadPrgRom(Cart *cart, const uint16_t addr)
+{
+    const int bank = nanjing.prg_high_reg << 4 | nanjing.prg_low_reg.prg_bank_low;
+    uint32_t final_addr = GetPrgBankAddr(bank , addr, PRG_BANK_SIZE_32KIB, cart->prg_rom.mask);
+    return cart->prg_rom.data[final_addr];
+}
+
 static uint8_t NromReadChrRom(Cart *cart, const uint16_t addr)
 {
-    return cart->chr_rom.data[addr & (cart->chr_rom.size - 1)];
+    return cart->chr_rom.data[addr & cart->chr_rom.mask];
 }
 
 static uint8_t Mmc1ReadChrRom(Cart *cart, const uint16_t addr)
@@ -236,10 +250,10 @@ static uint8_t Mmc1ReadChrRom(Cart *cart, const uint16_t addr)
     // Compute CHR-ROM address
     uint32_t final_addr = ((bank * bank_size) + (addr & (bank_size - 1)));
 
-    return cart->chr_rom.data[final_addr];
+    return cart->chr_rom.data[final_addr & cart->chr_rom.mask];
 }
 
-static uint8_t Mmc3ReadChrRom(Cart *cart, const uint16_t addr)
+static inline uint32_t GetMmc3ChrAddr(Cart *cart, const uint16_t addr)
 {
     const uint32_t effective_addr = addr ^ (mmc3.bank_sel.chr_a12_invert * 0x1000);
 
@@ -265,25 +279,54 @@ static uint8_t Mmc3ReadChrRom(Cart *cart, const uint16_t addr)
     uint32_t index = (effective_addr >> shift) - offset;
     uint32_t bank_base = mmc3.regs[index] << shift;
     uint32_t final_addr = bank_base | (effective_addr & (bank_size - 1));
+    return final_addr & cart->chr_rom.mask;
+}
 
-    return cart->chr_rom.data[final_addr];
+static uint8_t Mmc3ReadChr(Cart *cart, const uint16_t addr)
+{
+    return cart->chr_rom.data[GetMmc3ChrAddr(cart, addr)];
+}
+
+static void Mmc3WriteChr(Cart *cart, const uint16_t addr, const uint8_t data)
+{
+    cart->chr_rom.data[GetMmc3ChrAddr(cart, addr)] = data;
 }
 
 static uint8_t CnromReadChrRom(Cart *cart, const uint16_t addr)
 {
-    return cart->chr_rom.data[(cn_rom.chr_bank * 0x2000) + (addr & 0x1FFF)];
+    return cart->chr_rom.data[((cn_rom.chr_bank * 0x2000) + (addr & 0x1FFF)) & cart->chr_rom.mask];
 }
 
 static uint8_t ColorDreamsReadChrRom(Cart *cart, const uint16_t addr)
 {
-    return cart->chr_rom.data[(color_dreams.chr_bank * 0x2000) + (addr & 0x1FFF)];
+    return cart->chr_rom.data[((color_dreams.chr_bank * 0x2000) + (addr & 0x1FFF)) & cart->chr_rom.mask];
 }
 
 static uint8_t NinjaReadChrRom(Cart *cart, const uint16_t addr)
 {
     const int bank = addr < 0x1000 ? ninja.chr_bank0 : ninja.chr_bank1;
     //printf("BANK: %d ADDR: 0x%X\n", bank, addr);
-    return cart->chr_rom.data[(bank * 0x1000) + (addr & 0xFFF)];
+    return cart->chr_rom.data[((bank * 0x1000) + (addr & 0xFFF)) & cart->chr_rom.mask];
+}
+
+uint16_t GetNanjingChrAddr(Cart *cart, uint16_t addr)
+{
+    uint16_t final_addr = addr;
+    if (nanjing.prg_low_reg.chr_ram_auto_switch && addr < 0x1000)
+    {
+        final_addr = (SystemGetPpuA9() * 0x1000) + (addr & 0xFFF);
+    }
+    return final_addr & cart->chr_rom.mask;
+}
+
+static uint8_t NanjingReadChrRom(Cart *cart, const uint16_t addr)
+{
+    return cart->chr_rom.data[GetNanjingChrAddr(cart, addr)];
+}
+
+static void NanjingWriteChr(Cart *cart, const uint16_t addr, const uint8_t data)
+{
+    cart->chr_rom.data[GetNanjingChrAddr(cart, addr)] = data;
 }
 
 static const int mmc1_mirror_map[4] =
@@ -357,11 +400,11 @@ static void Mmc3RegWriteOdd(const uint16_t addr, const uint8_t data)
             uint8_t effective_data = data;
             if (mmc3.bank_sel.reg == 0x6 || mmc3.bank_sel.reg == 0x7)
             {
-                effective_data = data & 0x3F;
+                effective_data &= 0x3F;
             }
             else if (mmc3.bank_sel.reg == 0x0 || mmc3.bank_sel.reg == 0x1)
             {
-                effective_data = data >> 1;
+                effective_data >>= 1;
             }
             mmc3.regs[mmc3.bank_sel.reg] = effective_data;
         
@@ -401,7 +444,7 @@ static void Mmc3RegWriteEven(const uint16_t addr, const uint8_t data)
         case 1:
             mmc3.name_table_arrgmnt = data & 1;
             PpuSetMirroring(mmc3.name_table_arrgmnt ^ 1, 0);
-            //printf("Set MMC3 nametable mirroring mode: %d\n", !cart->mmc3.name_table_setup);
+            //printf("Set MMC3 nametable mirroring mode: %d\n", !mmc3.name_table_arrgmnt);
             break;
         // IRQ latch ($C000-$DFFE, even)
         case 2:
@@ -493,6 +536,47 @@ static void BnRomRegWrite(const uint16_t addr, const uint8_t data)
     bn_rom.bank = data;
 }
 
+static void NanjingRegWrite(const uint16_t addr, const uint8_t data)
+{
+    switch (addr)
+    {
+        // PRG Bank Low/CHR-RAM Switch ($5000, write);
+        case 0x5000:
+            //printf("PRG BANK LOW addr: 0x%X data: 0x%X\n", addr, data);
+            nanjing.prg_low_reg.raw = data;
+            break;
+        // Feedback Write ($5100-$5101, write)
+        case 0x5100:
+            //printf("NANJING Feedback Write addr: 0x%X data: %X\n", addr, data);
+            nanjing.feedback.raw = data;
+            nanjing.feedback.flip_latch = 0;
+            break;
+        case 0x5101:
+            //printf("NANJING Feedback Write addr: 0x%X data: %X\n", addr, data);
+            nanjing.feedback.latch ^= data & 1;
+            break;
+        // PRG Bank High ($5200, write)
+        case 0x5200:
+            //printf("PRG BANK HIGH addr: 0x%X data: 0x%X\n", addr, data);
+            nanjing.prg_high_reg = data;
+            break;
+        // Mode ($5300, write))
+        case 0x5300:
+            //printf("NANJING Mode addr: 0x%X data: 0x%X\n", addr, data);
+            nanjing.mode.raw = data;
+            break;
+        default:
+            //printf("UNK addr: 0x%X\n", addr);
+            break;
+    }
+}
+
+static uint8_t NanjingRegRead(const uint16_t addr)
+{
+    UNUSED(addr);
+    return ~nanjing.feedback.raw;
+}
+
 uint8_t MapperReadPrgRom(Cart *cart, const uint16_t addr)
 {
     return cart->PrgReadFn(cart, addr);
@@ -503,10 +587,19 @@ uint8_t MapperReadChrRom(Cart *cart, const uint16_t addr)
     return cart->ChrReadFn(cart, addr);
 }
 
-void MapperWrite(Cart *cart, const uint16_t addr, uint8_t data)
+uint8_t MapperReadReg(Cart *cart, const uint16_t addr)
 {
-    if (cart->mapper_num != MAPPER_NROM)
-        cart->RegWriteFn(addr, data);
+    return cart->RegReadFn(addr);
+}
+
+void MapperWriteChrRam(Cart *cart, const uint16_t addr, const uint8_t data)
+{
+    cart->ChrWriteFn(cart, addr, data);
+}
+
+void MapperWriteReg(Cart *cart, const uint16_t addr, uint8_t data)
+{
+    cart->RegWriteFn(addr, data);
 }
 
 void Mmc3ClockIrqCounter(Cart *cart)
@@ -538,6 +631,19 @@ bool PollMapperIrq(void)
     return mmc3.irq_pending;
 }
 
+void MapperReset(Cart *cart)
+{
+    switch (cart->mapper_num)
+    {
+        case MAPPER_NANJING:
+            nanjing.feedback.raw = 0;
+            nanjing.mode.raw = 0;
+            break;
+        default:
+            break;
+    }
+}
+
 void MapperInit(Cart *cart)
 {
     switch (cart->mapper_num)
@@ -545,48 +651,73 @@ void MapperInit(Cart *cart)
         case MAPPER_NROM:
             cart->PrgReadFn = NromReadPrgRom;
             cart->ChrReadFn = NromReadChrRom;
-            cart->mem_map = MEM_MAP_NORMAL;
+            cart->ChrWriteFn = ChrWriteGeneric;
+            SystemAddMemMapRead(0x6000, 0x7FFF, MEM_SWRAM_READ);
+            SystemAddMemMapWrite(0x6000, 0x7FFF, MEM_SWRAM_WRITE);
+            SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
             break;
         case MAPPER_MMC1:
             mmc1.control.prg_rom_bank_mode = 3;
             cart->PrgReadFn = Mmc1ReadPrgRom;
             cart->ChrReadFn = Mmc1ReadChrRom;
+            cart->ChrWriteFn = ChrWriteGeneric;
             cart->RegWriteFn = Mmc1RegWrite;
-            cart->mem_map = MEM_MAP_NORMAL;
+            SystemAddMemMapRead(0x6000, 0x7FFF, MEM_SWRAM_READ);
+            SystemAddMemMapWrite(0x6000, 0x7FFF, MEM_SWRAM_WRITE);
+            SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
+            SystemAddMemMapWrite(0x8000, 0xFFFF, MEM_REG_WRITE);
             cart->prg_rom.num_banks = GetNumPrgRomBanks(cart->prg_rom.size, PRG_BANK_SIZE_16KIB);
             break;
         case MAPPER_UXROM:
             cart->PrgReadFn = UxRomReadPrgRom;
             cart->ChrReadFn = NromReadChrRom;
+            cart->ChrWriteFn = ChrWriteGeneric;
             cart->RegWriteFn = UxRomRegWrite;
-            cart->mem_map = MEM_MAP_NORMAL;
+            SystemAddMemMapRead(0x6000, 0x7FFF, MEM_SWRAM_READ);
+            SystemAddMemMapWrite(0x6000, 0x7FFF, MEM_SWRAM_WRITE);
+            SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
+            SystemAddMemMapWrite(0x8000, 0xFFFF, MEM_REG_WRITE);
             cart->prg_rom.num_banks = GetNumPrgRomBanks(cart->prg_rom.size, PRG_BANK_SIZE_16KIB);
             break;
         case MAPPER_CNROM:
             cart->PrgReadFn = NromReadPrgRom;
             cart->ChrReadFn = CnromReadChrRom;
+            cart->ChrWriteFn = ChrWriteGeneric;
             cart->RegWriteFn = CnRomRegWrite;
-            cart->mem_map = MEM_MAP_NORMAL;
+            SystemAddMemMapRead(0x6000, 0x7FFF, MEM_SWRAM_READ);
+            SystemAddMemMapWrite(0x6000, 0x7FFF, MEM_SWRAM_WRITE);
+            SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
+            SystemAddMemMapWrite(0x8000, 0xFFFF, MEM_REG_WRITE);
             break;
         case MAPPER_MMC3:
+        {
             cart->PrgReadFn = Mmc3ReadPrgRom;
-            cart->ChrReadFn = Mmc3ReadChrRom;
+            cart->ChrReadFn = Mmc3ReadChr;
+            cart->ChrWriteFn = Mmc3WriteChr;
             cart->RegWriteFn = Mmc3RegWrite;
-            cart->mem_map = MEM_MAP_NORMAL;
+            SystemAddMemMapRead(0x6000, 0x7FFF, MEM_SWRAM_READ);
+            SystemAddMemMapWrite(0x6000, 0x7FFF, MEM_SWRAM_WRITE);
+            SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
+            SystemAddMemMapWrite(0x8000, 0xFFFF, MEM_REG_WRITE);
             cart->prg_rom.num_banks = GetNumPrgRomBanks(cart->prg_rom.size, PRG_BANK_SIZE_8KIB);
             break;
+        }
         case MAPPER_AXROM:
             cart->PrgReadFn = AxRomReadPrgRom;
             cart->ChrReadFn = NromReadChrRom;
+            cart->ChrWriteFn = ChrWriteGeneric;
             cart->RegWriteFn = AxRomRegWrite;
-            cart->mem_map = MEM_MAP_NORMAL;
+            SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
+            SystemAddMemMapWrite(0x8000, 0xFFFF, MEM_REG_WRITE);
             cart->prg_rom.num_banks = GetNumPrgRomBanks(cart->prg_rom.size, PRG_BANK_SIZE_32KIB);
             break;
         case MAPPER_COLORDREAMS:
             cart->PrgReadFn = ColorDreamsReadPrgRom;
             cart->ChrReadFn = ColorDreamsReadChrRom;
+            cart->ChrWriteFn = ChrWriteGeneric;
             cart->RegWriteFn = ColorDreamsRegWrite;
-            cart->mem_map = MEM_MAP_NORMAL;
+            SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
+            SystemAddMemMapWrite(0x8000, 0xFFFF, MEM_REG_WRITE);
             cart->prg_rom.num_banks = GetNumPrgRomBanks(cart->prg_rom.size, PRG_BANK_SIZE_32KIB);
             break;
         case MAPPER_BNROM_NINJA:
@@ -595,14 +726,32 @@ void MapperInit(Cart *cart)
             {
                 cart->PrgReadFn = NinjaReadPrgRom;
                 cart->ChrReadFn = NinjaReadChrRom;
+                cart->ChrWriteFn = ChrWriteGeneric;
                 cart->RegWriteFn = NinjaRegWrite;
-                cart->mem_map = MEM_MAP_NINJA;
+                SystemAddMemMapRead(0x6000, 0x7FFF, MEM_SWRAM_READ);
+                SystemAddMemMapWrite(0x6000, 0x7FFF, MEM_SWRAM_WRITE);
+                SystemAddMemMapWrite(0x7FFD, 0x7FFF, MEM_REG_WRITE);
+                SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
                 break;
             }
             cart->PrgReadFn = BnRomReadPrgRom;
             cart->ChrReadFn = NromReadChrRom;
+            cart->ChrWriteFn = ChrWriteGeneric;
             cart->RegWriteFn = BnRomRegWrite;
-            cart->mem_map = MEM_MAP_NORMAL;
+            SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
+            SystemAddMemMapWrite(0x8000, 0xFFFF, MEM_REG_WRITE);
+            break;
+        case MAPPER_NANJING:
+            cart->PrgReadFn = NanjingReadPrgRom;
+            cart->ChrReadFn = NanjingReadChrRom;
+            cart->ChrWriteFn = NanjingWriteChr;
+            cart->RegWriteFn = NanjingRegWrite;
+            cart->RegReadFn = NanjingRegRead;
+            SystemAddMemMapRead(0x5000, 0x5FFF, MEM_REG_READ);
+            SystemAddMemMapWrite(0x5000, 0x5FFF, MEM_REG_WRITE);
+            SystemAddMemMapRead(0x6000, 0x7FFF, MEM_SWRAM_READ);
+            SystemAddMemMapWrite(0x6000, 0x7FFF, MEM_SWRAM_WRITE);
+            SystemAddMemMapRead(0x8000, 0xFFFF, MEM_PRG_READ);
             break;
         default:
             printf("Bad Mapper type!: %d\n", cart->mapper_num);

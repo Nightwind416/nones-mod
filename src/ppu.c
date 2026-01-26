@@ -90,16 +90,49 @@ static Color sys_palette[64] =
     {0x00, 0x00, 0x00}
 };
 
+static void PpuApplyColorEmphasis(Ppu *ppu, Color *color, uint8_t color_index)
+{
+    if (color_index == 0xE || color_index == 0xF)
+        return;
+
+    if (ppu->mask.emphasize_red)
+    {
+        color->b *= COLOR_ATTENUATION;
+        color->g *= COLOR_ATTENUATION;
+    }
+
+    if (ppu->mask.emphasize_green)
+    {
+        color->b *= COLOR_ATTENUATION;
+        color->r *= COLOR_ATTENUATION;
+    }
+
+    if (ppu->mask.emphasize_blue)
+    {
+        color->g *= COLOR_ATTENUATION;
+        color->r *= COLOR_ATTENUATION;
+    }
+}
+
 static Color GetBGColor(Ppu *ppu, const uint8_t palette_index, const uint8_t pixel)
 {
     // Compute palette memory address
-    const uint16_t palette_addr = 0x3F00 + (palette_index * 4) + pixel;
+    const uint16_t palette_addr = 0x3F00 | (palette_index << 2) | pixel;
+
+    // When rendering is off and V points to palette memory;
+    // The backdrop color is replaced by the value from the low 5 bits of V
+    const bool backdrop_override = !ppu->rendering && (((ppu->v.raw & 0x3FFF) >= 0x3F00));
 
     // Read the color index from PPU palette memory
     uint16_t color_index = ppu->palettes[palette_addr & 0x1F];
 
-    if (!pixel)
+    if (backdrop_override)
     {
+        color_index = ppu->palettes[ppu->v.palette.addr];
+    }
+    else if (!pixel)
+    {
+        // Use backdrop color
         color_index = ppu->palettes[0];
     }
 
@@ -108,12 +141,15 @@ static Color GetBGColor(Ppu *ppu, const uint8_t palette_index, const uint8_t pix
         color_index &= 0x30;
     }
 
-    return sys_palette[color_index & 0x3F];
+    Color color = sys_palette[color_index & 0x3F];
+    PpuApplyColorEmphasis(ppu, &color, color_index);
+
+    return color;
 }
 
 static Color GetSpriteColor(Ppu *ppu, const uint8_t palette_index, const uint8_t pixel)
 {
-    const uint16_t palette_addr = 0x10 + (palette_index * 4) + pixel;
+    const uint16_t palette_addr = 0x10 | (palette_index << 2) | pixel;
     uint16_t color_index = ppu->palettes[palette_addr];
 
     if (ppu->mask.grey_scale)
@@ -121,7 +157,10 @@ static Color GetSpriteColor(Ppu *ppu, const uint8_t palette_index, const uint8_t
         color_index &= 0x30;
     }
 
-    return sys_palette[color_index & 0x3F];
+    Color color = sys_palette[color_index & 0x3F];
+    PpuApplyColorEmphasis(ppu, &color, color_index);
+
+    return color;
 }
 
 void PPU_WriteAddrReg(Ppu *ppu, const uint8_t value)
@@ -201,7 +240,7 @@ static void PpuPaletteWrite(Ppu *ppu, const uint8_t palette_addr, const uint8_t 
 {
     ppu->palettes[palette_addr] = data;
 
-    if ((palette_addr & 3) == 0)
+    if (!(palette_addr & 3))
         ppu->palettes[palette_addr ^ 0x10] = data;
 }
 
@@ -214,7 +253,6 @@ static void PPU_WriteCtrl(Ppu *ppu, const uint8_t data)
 
 void PPU_WriteData(Ppu *ppu, const uint8_t data)
 {
-    const uint8_t prev_a12 = ppu->v.raw_bits.bit12;
     const uint16_t addr = ppu->v.raw & 0x3FFF;
 
     // Extract A13, A12, A11 for region decoding
@@ -248,10 +286,8 @@ void PPU_WriteData(Ppu *ppu, const uint8_t data)
     }
     else
     {
-        ppu->v.raw += ppu->ctrl.vram_addr_inc ? 32 : 1;
+        ppu->delayed_vram_inc += ppu->ctrl.vram_addr_inc ? 32 : 1;
     }
-    if (~prev_a12 & ppu->v.raw_bits.bit12)
-        PpuClockMMC3();
 }
 
 static void PPU_WriteScroll(Ppu *ppu, const uint8_t value)
@@ -387,8 +423,8 @@ void WritePPURegister(Ppu *ppu, const uint16_t addr, const uint8_t data)
     const uint16_t reg = addr & 7;
 
     // NES-001 PPU warmup. This will break Famicom games that try to enable NMI before 29658 cpu cycles have passed.
-    //if (!ppu->frames && (reg == PPU_CTRL || reg == PPU_MASK || reg == PPU_SCROLL || reg == PPU_ADDR))
-    //    return;
+    if (ppu->warmup && !ppu->frames && (reg == PPU_CTRL || reg == PPU_MASK || reg == PPU_SCROLL || reg == PPU_ADDR))
+        return;
 
     switch (reg)
     {
@@ -465,7 +501,7 @@ void PpuSetMirroring(NameTableMirror mode, int page)
     }
 }
 
-void PPU_Init(Ppu *ppu, int mirroring, uint32_t **buffers, const uint32_t buffer_size)
+void PPU_Init(Ppu *ppu, int mirroring, bool warmup, uint32_t **buffers, const uint32_t buffer_size)
 {
     memset(ppu, 0, sizeof(*ppu));
     ppu->mirroring = mirroring;
@@ -475,6 +511,7 @@ void PPU_Init(Ppu *ppu, int mirroring, uint32_t **buffers, const uint32_t buffer
     ppu->buffers[1] = buffers[1];
     ppu->buffer_size = buffer_size;
     ppu->ext_input = 0;
+    ppu->warmup = warmup;
     //ppu->status.open_bus = 0x1C;
 }
 
@@ -674,17 +711,15 @@ static void PpuRender(Ppu *ppu, int scanline)
         case 4:
         {
             // Get pattern table address for this tile
-            size_t tile_offset = bank + (ppu->tile_id * 16) + ppu->v.scrolling.fine_y;
+            ppu->bg_addr = bank + (ppu->tile_id << 4) + ppu->v.scrolling.fine_y;
             // Bitplane 0
-            ppu->bg_lsb = PpuReadChr(ppu, tile_offset);
+            ppu->bg_lsb = PpuReadChr(ppu, ppu->bg_addr);
             break;
         }
         case 6:
         {
-            // Get pattern table address for this tile
-            size_t tile_offset = bank + (ppu->tile_id * 16) + ppu->v.scrolling.fine_y;
             // Bitplane 1
-            ppu->bg_msb = PpuReadChr(ppu, tile_offset + 8);
+            ppu->bg_msb = PpuReadChr(ppu, ppu->bg_addr + 8);
             break;
         }
         case 7:
@@ -870,6 +905,16 @@ void PPU_Tick(Ppu *ppu)
         // Clear vblank
         ppu->status.vblank = 0;
         ppu->clear_vblank = false;
+    }
+
+    // VRAM addr (V) increments are delayed one dot/cycle for $2007(PPUDATA) writes
+    if (ppu->delayed_vram_inc)
+    {
+        const uint8_t prev_a12 = ppu->v.raw_bits.bit12;
+        ppu->v.raw += ppu->delayed_vram_inc;
+        ppu->delayed_vram_inc = 0;
+        if (~prev_a12 & ppu->v.raw_bits.bit12)
+            PpuClockMMC3();
     }
 
     if (ppu->mask.bg_rendering && ppu->cycle_counter == 339 && ppu->scanline == 261 && ppu->frames & 1)

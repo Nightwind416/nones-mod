@@ -17,21 +17,44 @@ typedef enum
     MAPPER_MMC3,
     MAPPER_AXROM = 7,
     MAPPER_COLORDREAMS = 11,
-    MAPPER_BNROM_NINJA = 34
+    MAPPER_BNROM_NINJA = 34,
+    MAPPER_NANJING = 163
 } MapperType;
 
 typedef enum
 {
-    MEM_MAP_NORMAL,
-    MEM_MAP_NINJA
-} MemMapType;
+    MEM_PERM_READ,
+    MEM_PERM_WRITE,
+    MEM_PERM_READ_WRITE,
+} MemPermissions;
+
+typedef enum
+{
+    MEM_PRG_READ,
+    MEM_REG_READ,
+    MEM_SWRAM_READ, 
+    MEM_REG_WRITE,
+    MEM_SWRAM_WRITE
+} MemOperation;
+
+typedef struct
+{
+    uint32_t start_addr;
+    uint32_t end_addr;
+    MemPermissions perms;
+    MemOperation op;
+} MemMap;
+
 
 uint8_t MapperReadPrgRom(Cart *cart, const uint16_t addr);
 uint8_t MapperReadChrRom(Cart *cart, const uint16_t addr);
-void MapperWrite(Cart *cart, const uint16_t addr, uint8_t data);
+uint8_t MapperReadReg(Cart *cart, const uint16_t addr);
+void MapperWriteChrRam(Cart *cart, const uint16_t addr, const uint8_t data);
+void MapperWriteReg(Cart *cart, const uint16_t addr, uint8_t data);
 
 void Mmc3ClockIrqCounter(Cart *cart);
 bool PollMapperIrq(void);
+void MapperReset(Cart *cart);
 void MapperInit(Cart *cart);
 
 extern Mmc1 mmc1;
@@ -42,5 +65,6 @@ extern CnRom cn_rom;
 extern ColorDreams color_dreams;
 extern Ninja ninja;
 extern BnRom bn_rom;
+extern Nanjing nanjing;
 
 #endif

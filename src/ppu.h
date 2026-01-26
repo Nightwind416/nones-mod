@@ -23,6 +23,9 @@
 #define PPU_DATA_REG   0x2007
 #define OAM_DMA_REG    0x4014
 
+// For color emphasis
+#define COLOR_ATTENUATION 0.816328f
+
 typedef enum
 {
     PPU_CTRL   = 0,
@@ -134,33 +137,6 @@ typedef union
         uint16_t fine_y : 3;
     } scrolling;
 
-    struct
-    {
-        // Fine Y offset, the row number within a tile
-        uint16_t fine_y : 3;// Bits 0-2
-        // Bit plane (0: less significant bit; 1: more significant bit)
-        uint16_t bit_plane_msb : 1; // Bit 3
-        // Tile number from name table
-        uint16_t tile_num  : 8; // Bits 4-12
-        // Half of pattern table (0: "left"; 1: "right")
-        uint16_t pattern_table_half : 1; // Bit 13
-        // Pattern table is at $0000-$1FFF
-        uint16_t pattern_table_low_addr : 1; // Bit 14 
-    } pattern_table;
-
-    struct
-    {
-        //NN 1111 YYY XXX
-        //|| |||| ||| +++-- high 3 bits of coarse X (x/4)
-        //|| |||| +++------ high 3 bits of coarse Y (y/4)
-        //|| ++++---------- attribute offset (960 bytes)
-        //++--------------- nametable select
-        uint16_t coarse_x : 3;
-        uint16_t coarse_y : 3;
-        uint16_t attrib_offset : 4;
-        uint16_t name_table_sel : 2;
-    } fetching;
-
     // The 16-bit address is written to PPUADDR one byte at a time, high byte first.
     // Whether this is the first or second write is tracked by the PPU's internal w register, which is shared with PPUSCROLL.
     // If w is not 0 or its state is not known, it must be cleared by reading PPUSTATUS before writing the address.
@@ -172,7 +148,13 @@ typedef union
         uint16_t  bit_z: 1;
     } writing;
 
-    struct {
+    struct
+    {
+        uint16_t addr : 5;
+    } palette;
+
+    struct
+    {
         uint16_t bit0 : 1;
         uint16_t bit1 : 1;
         uint16_t bit2 : 1;
@@ -280,11 +262,14 @@ typedef struct
     ShiftReg attrib_shift_low;
     ShiftReg attrib_shift_high;
 
+    uint16_t delayed_vram_inc;
+    uint16_t sprite_addr;
+    uint16_t bg_addr;
+
     // Per scanline
     int found_sprites;
     int prev_found_sprites;
     int sprite_y_offset;
-    uint32_t sprite_addr;
     bool sprite0_loaded;
     bool prev_sprite0_loaded;
     bool sprite_in_range;
@@ -311,11 +296,12 @@ typedef struct
     uint8_t bg_lsb;
     uint8_t bg_msb;
 
+    bool warmup;
     // io data bus
     uint8_t io_bus;
 } Ppu;
 
-void PPU_Init(Ppu *ppu, int mirroring, uint32_t **buffers, uint32_t buffer_size);
+void PPU_Init(Ppu *ppu, int mirroring, bool warmup, uint32_t **buffers, uint32_t buffer_size);
 void PPU_Tick(Ppu *ppu);
 void PPU_Reset(Ppu *ppu);
 void PpuUpdateRenderingState(Ppu *ppu);

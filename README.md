@@ -1,6 +1,6 @@
 # Nones
 
-A simple NTSC NES emulator written in C.
+A small cycle accurate NTSC NES emulator written in C.
 
 ## Modifications
 
@@ -41,6 +41,9 @@ Games that use the following mapper chips are supported:
     </tr>
     <tr>
         <td align="center">Ninja + BNROM</td><td align="center">34</td>
+    </tr>
+    <tr>
+        <td align="center">Nanjing</td><td align="center">163</td>
     </tr>
 </table>
 
@@ -87,7 +90,21 @@ Basic gamepad support for up to two players, currently, button layout is fixed t
 
 After building you should be able run the program via `./nones "game.nes"`
 
-### Commands/Hotkeys:
+You can also apply additional arguments after specifying the rom path, which include the following:
+
+* `--sdl-audio-driver="driver-name"`
+
+Set the preferred audio driver for SDL to use.
+
+* `--ppu-warmup`
+
+Enable the ppu warm up delay found on the NES-001. (Will break some famicom games)
+
+* `--apu-swap-duty-cycles`
+
+Enable the use of swapped duty cycles for the square/pulse channels (Needed for older famiclone games)
+
+### Hotkeys:
 
 * `1 -> 5`
 

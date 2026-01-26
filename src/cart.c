@@ -72,6 +72,7 @@ int CartLoad(Arena *arena, Cart *cart, const char *path)
         case MAPPER_AXROM:
         case MAPPER_COLORDREAMS:
         case MAPPER_BNROM_NINJA:
+        case MAPPER_NANJING:
             break;
         default:
             printf("Mapper %d is not supported yet!\n", mapper_number);
@@ -110,12 +111,14 @@ int CartLoad(Arena *arena, Cart *cart, const char *path)
     }
     else
     {
-        // Chr rom size is 0, assume it's chr ram with a size of 8kib
-        printf("Using chr ram\n");
-        cart->chr_rom.data = ArenaPush(arena, CHR_RAM_SIZE);
-        cart->chr_rom.size = CHR_RAM_SIZE;
-        cart->chr_rom.is_ram = true;  
+        // If Chr rom size is 0, and chr ram shift count is 0. Assume it's Chr ram with a size of 8 Kib
+        cart->chr_rom.size = hdr.chr_ram_shift_count ? 64 << hdr.chr_ram_shift_count : CHR_RAM_SIZE;
+        printf("CHR Ram Size: %d KiB\n", cart->chr_rom.size >> 10);
+        cart->chr_rom.data = ArenaPush(arena, cart->chr_rom.size);
+        cart->chr_rom.ram = true;
     }
+
+    cart->chr_rom.mask = cart->chr_rom.size - 1;
 
     // Sram / Wram
     cart->ram = ArenaPush(arena, CART_RAM_SIZE);

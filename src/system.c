@@ -36,10 +36,10 @@ int SystemLoadCart(Arena *arena, System *system, const char *path)
     return CartLoad(arena, system->cart, path);
 }
 
-void SystemInit(System *system, uint32_t **buffers, const uint32_t buffer_size)
+void SystemInit(System *system, bool ppu_warmup, bool swap_duty_cycles, uint32_t **buffers, const uint32_t buffer_size)
 {
-    PPU_Init(system->ppu, system->cart->mirroring, buffers, buffer_size);
-    APU_Init(system->apu);
+    PPU_Init(system->ppu, system->cart->mirroring, ppu_warmup, buffers, buffer_size);
+    APU_Init(system->apu, swap_duty_cycles);
     CPU_Init(system->cpu);
 }
 
@@ -66,12 +66,6 @@ static void SWramWrite(System *system, const uint16_t addr, const uint8_t data)
 static uint8_t SWramRead(System *system, const uint16_t addr)
 {
     return system->cart->ram[addr & 0x1FFF];
-}
-
-static void NinjaWrite(System *system, const uint16_t addr, const uint8_t data)
-{
-    SWramWrite(system, addr, data);
-    MapperWrite(system->cart, addr, data);
 }
 
 static bool ApuRegsActivated(System *system)
@@ -116,7 +110,7 @@ static void SystemStartOamDma(System *system, const uint8_t page_num, const uint
             ApuDmcDmaUpdate(system->apu);
             system->dmc_dma_triggered = false;
         }
-        else if (system_ptr->dmc_dma_triggered && system_ptr->oam_dma_bytes_remaining == 2)
+        else if (system->dmc_dma_triggered && system->oam_dma_bytes_remaining == 2)
         {
             single_dma_cycle = true;
         }
@@ -148,15 +142,15 @@ static void SystemStartOamDma(System *system, const uint8_t page_num, const uint
     }
 }
 
-static void SystemStartDmcDma(const uint16_t addr)
+static void SystemStartDmcDma(System *system, const uint16_t addr)
 {
     // Add cpu halt cycle
     SystemTick();
     BusRead(addr);
 
-    if (ExplicitAbortDmcDma(system_ptr))
+    if (ExplicitAbortDmcDma(system))
     {
-        system_ptr->dmc_dma_triggered = false;
+        system->dmc_dma_triggered = false;
         return;
     }
 
@@ -165,15 +159,15 @@ static void SystemStartDmcDma(const uint16_t addr)
     BusRead(addr);
 
     // Alignment cycle if needed
-    if (system_ptr->cpu->cycles & 1)
+    if (system->cpu->cycles & 1)
     {
         SystemTick();
         BusRead(addr);
     }
 
     SystemTick();
-    ApuDmcDmaUpdate(system_ptr->apu);
-    system_ptr->dmc_dma_triggered = false;
+    ApuDmcDmaUpdate(system->apu);
+    system->dmc_dma_triggered = false;
 }
 
 void SystemSignalDmcDma(void)
@@ -182,13 +176,75 @@ void SystemSignalDmcDma(void)
     system_ptr->dmc_dma_triggered = true;
 }
 
-typedef void (*MemMap6k)(System *system, const uint16_t addr, const uint8_t data);
-// TODO: This method of handling mem maps should be redone
-static const MemMap6k mem_map_6k[] =
+static uint8_t SystemMemMappedRead(System *system, MemOperation op, const uint16_t addr)
 {
-    [0] = SWramWrite,
-    [1] = NinjaWrite,
-};
+    switch (op)
+    {
+        case MEM_PRG_READ:
+            return MapperReadPrgRom(system->cart, addr);
+        case MEM_REG_READ:
+            return MapperReadReg(system->cart, addr);
+        case MEM_SWRAM_READ:
+            return SWramRead(system, addr);
+        default:
+            return 0;
+    }
+}
+
+static void SystemMemMappedWrite(System *system, MemOperation op, const uint16_t addr, uint8_t data)
+{
+    switch (op)
+    {
+        case MEM_SWRAM_WRITE:
+            SWramWrite(system, addr, data);
+            break;
+        case MEM_REG_WRITE:
+            MapperWriteReg(system->cart, addr, data);
+            break;
+        default:
+            break;
+    }
+}
+
+void SystemAddMemMap(const uint16_t start_addr, const uint16_t end_addr, MemOperation op, MemPermissions perms)
+{
+    System *system = system_ptr;
+    MemMap *mem_map = NULL;
+
+    if (perms != MEM_PERM_WRITE)
+    {
+        mem_map = &system->mem_map_r[system->mem_maps_r++];
+        mem_map->start_addr = start_addr;
+        mem_map->end_addr = end_addr;
+        mem_map->op = op;
+    }
+
+    if (perms != MEM_PERM_READ)
+    {
+        mem_map = &system->mem_map_w[system->mem_maps_w++];
+        mem_map->start_addr = start_addr;
+        mem_map->end_addr = end_addr;
+        mem_map->op = op;
+    }
+}
+
+void SystemAddMemMapRead(const uint16_t start_addr, const uint16_t end_addr, MemOperation op)
+{
+    System *system = system_ptr;
+    MemMap *mem_map = &system->mem_map_r[system->mem_maps_r++];
+    mem_map->start_addr = start_addr;
+    mem_map->end_addr = end_addr;
+    mem_map->op = op;
+}
+
+void SystemAddMemMapWrite(const uint16_t start_addr, const uint16_t end_addr, MemOperation op)
+{
+    System *system = system_ptr;
+    MemMap *mem_map = &system->mem_map_w[system->mem_maps_w++];
+    mem_map->start_addr = start_addr;
+    mem_map->end_addr = end_addr;
+    mem_map->op = op;
+}
 
 uint8_t SystemRead(const uint16_t addr)
 {
@@ -197,7 +253,7 @@ uint8_t SystemRead(const uint16_t addr)
     {
         if (system_ptr->dmc_dma_triggered && !system_ptr->oam_dma_triggered)
         {
-            SystemStartDmcDma(addr);
+            SystemStartDmcDma(system_ptr, addr);
         }
         else if (system_ptr->oam_dma_triggered)
         {
@@ -254,17 +310,20 @@ uint8_t BusRead(const uint16_t addr)
         case 0x1:
             system_ptr->bus_data = ReadPPURegister(system_ptr->ppu, addr);
             break;
-
-        case 0x3:  // $6000 - $7FFF
-            system_ptr->bus_data = SWramRead(system_ptr, addr);
+        default:
+        {
+            for (int i = 0; i < system_ptr->mem_maps_r; i++)
+            {
+                MemMap *mem_map = &system_ptr->mem_map_r[i];
+            
+                if (addr >= mem_map->start_addr && addr <= mem_map->end_addr)
+                {
+                    system_ptr->bus_data = SystemMemMappedRead(system_ptr, mem_map->op, addr);
+                    break;
+                }
+            }
             break;
-    
-        case 0x4:  // $8000 - $9FFF
-        case 0x5:  // $A000 - $BFFF
-        case 0x6:  // $C000 - $DFFF
-        case 0x7:  // $E000 - $FFFF
-            system_ptr->bus_data = MapperReadPrgRom(system_ptr->cart, addr);
-        break;
+        }
     }
 
     // Finally read the data from the bus
@@ -315,24 +374,18 @@ void BusWrite(const uint16_t addr, const uint8_t data)
             {
                 WriteAPURegister(system_ptr->apu, addr, data);
             }
-            else
-            {
-                DEBUG_LOG("Trying to write %d at 0x%04X\n", data, addr);
-            }
             break;
         }
-        // SRAM / WRAM / Mapper
-        // $6000 - $7FFF
-        case 0x3:
-            mem_map_6k[system_ptr->cart->mem_map](system_ptr, addr, data);
-            break;
+    }
 
-        case 0x4:  // $8000 - $9FFF
-        case 0x5:  // $A000 - $BFFF
-        case 0x6:  // $C000 - $DFFF
-        case 0x7:  // $E000 - $FFFF
-            MapperWrite(system_ptr->cart, addr, data);
-            break;
+    for (int i = 0; i < system_ptr->mem_maps_w; i++)
+    {
+        MemMap *mem_map = &system_ptr->mem_map_w[i];
+
+        if (addr >= mem_map->start_addr && addr <= mem_map->end_addr)
+        {
+            SystemMemMappedWrite(system_ptr, mem_map->op, addr, data);
+        }
     }
 
     system_ptr->bus_data = data;
@@ -358,6 +411,11 @@ Cpu *SystemGetCpu(void)
     return system_ptr->cpu;
 }
 
+uint8_t SystemGetPpuA9(void)
+{
+    return system_ptr->ppu->v.raw_bits.bit9;
+}
+
 // TODO: The Ppu struct should have a ptr to the chr rom / chr ram
 // The PPU only exposes the io regs on the main bus, it has its own bus
 uint8_t PpuBusReadChrRom(const uint16_t addr)
@@ -367,11 +425,11 @@ uint8_t PpuBusReadChrRom(const uint16_t addr)
 
 void PpuBusWriteChrRam(const uint16_t addr, const uint8_t data)
 {
-    if (!system_ptr->cart->chr_rom.is_ram)
+    Cart *cart = system_ptr->cart;
+    if (!cart->chr_rom.ram)
         return;
 
-    ChrRom *chr_rom = &system_ptr->cart->chr_rom;
-    chr_rom->data[addr & (chr_rom->size - 1)] = data;
+    MapperWriteChrRam(cart, addr, data);
 }
 
 void PpuClockMMC3(void)
@@ -462,6 +520,7 @@ void SystemUpdateJPButtons(System *system, const bool *buttons)
 
 void SystemReset(System *system)
 {
+    MapperReset(system->cart);
     APU_Reset(system->apu);
     PPU_Reset(system->ppu);
     CPU_Reset(system->cpu);

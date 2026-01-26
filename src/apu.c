@@ -45,12 +45,33 @@ static const uint8_t length_counter_table[] =
     12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30
 };
 
-static const uint8_t duty_cycle_table[4][8] =
+static const uint8_t duty_cycle_table[2][4][8] =
 {
-    { 0, 0, 0, 0, 0, 0, 0, 1 },
-    { 0, 0, 0, 0, 0, 0, 1, 1 },
-    { 0, 0, 0, 0, 1, 1, 1, 1 },
-    { 1, 1, 1, 1, 1, 1, 0, 0 }
+    // Normal Duty cycle table
+    // Duty  Output
+    // 0 	 0 1 0 0 0 0 0 0 (12.5%)
+    // 1 	 0 1 1 0 0 0 0 0 (25%)
+    // 2 	 0 1 1 1 1 0 0 0 (50%)
+    // 3 	 1 0 0 1 1 1 1 1 (25% negated) 
+    {
+        { 0, 1, 0, 0, 0, 0, 0, 0 },
+        { 0, 1, 1, 0, 0, 0, 0, 0 },
+        { 0, 1, 1, 1, 1, 0, 0, 0 },
+        { 1, 0, 0, 1, 1, 1, 1, 1 }
+    },
+
+    // Swapped Duty cycle table for older famiclones
+    // Duty  Output
+    // 0 	 0 1 0 0 0 0 0 0 (12.5%)
+    // 1 	 0 1 1 1 1 0 0 0 (50%)
+    // 2 	 0 1 1 0 0 0 0 0 (25%)
+    // 3 	 1 0 0 1 1 1 1 1 (25% negated) 
+    {
+        { 0, 1, 0, 0, 0, 0, 0, 0 },
+        { 0, 1, 1, 1, 1, 0, 0, 0 },
+        { 0, 1, 1, 0, 0, 0, 0, 0 },
+        { 1, 0, 0, 1, 1, 1, 1, 1 }
+    }
 };
 
 static const uint8_t triangle_table[32] =
@@ -76,7 +97,7 @@ static const uint8_t dmc_table[16] =
 
 bool PollApuIrqs(Apu *apu)
 {
-    return apu->status.dmc_irq | apu->status.frame_irq;
+    return apu->status.dmc_irq | (apu->status.frame_irq & ~apu->frame_counter.control.irq_inhibit);
 }
 
 #define FCPU 1789773.0
@@ -169,22 +190,22 @@ static void ApuClockLengthCounters(Apu *apu)
 {
     if (apu->pulse1.length_counter && !apu->pulse1.reg.counter_halt)
     {
-        apu->pulse1.length_counter--;
+        --apu->pulse1.length_counter;
     }
 
     if (apu->pulse2.length_counter && !apu->pulse2.reg.counter_halt)
     {
-        apu->pulse2.length_counter--;
+        --apu->pulse2.length_counter;
     }
 
     if (apu->triangle.length_counter && !apu->triangle.reg.control_halt)
     {
-        apu->triangle.length_counter--;
+        --apu->triangle.length_counter;
     }
 
     if (apu->noise.length_counter && !apu->noise.reg.counter_halt)
     {
-        apu->noise.length_counter--;
+        --apu->noise.length_counter;
     }
 
     //printf("Pulse 1 length counter: %d\n", apu->pulse1.length_counter);
@@ -201,7 +222,7 @@ static void ApuClockLinearCounters(Apu *apu)
     }
     else if (apu->triangle.linear_counter > 0)
     {
-        apu->triangle.linear_counter--;
+        --apu->triangle.linear_counter;
     }
 
     apu->triangle.reload &= apu->triangle.reg.control_halt; 
@@ -309,7 +330,7 @@ static void ApuClockSweeps(Apu *apu)
     }
     else
     {
-        apu->pulse2.sweep_counter--;
+        --apu->pulse2.sweep_counter;
     }
 }
 
@@ -318,12 +339,12 @@ static void ApuClockEnvelopes(Apu *apu)
     if (!apu->pulse1.envelope.start)
     {
         if (apu->pulse1.envelope.counter > 0)
-            apu->pulse1.envelope.counter--;
+            --apu->pulse1.envelope.counter;
         else
         {
             apu->pulse1.envelope.counter = apu->pulse1.reg.volume_env;
             if (apu->pulse1.envelope.decay_counter > 0)
-                apu->pulse1.envelope.decay_counter--;
+                --apu->pulse1.envelope.decay_counter;
             else if (apu->pulse1.reg.counter_halt)
                 apu->pulse1.envelope.decay_counter = 15;
         }
@@ -340,12 +361,12 @@ static void ApuClockEnvelopes(Apu *apu)
     if (!apu->pulse2.envelope.start)
     {
         if (apu->pulse2.envelope.counter > 0)
-            apu->pulse2.envelope.counter--;
+            --apu->pulse2.envelope.counter;
         else
         {
             apu->pulse2.envelope.counter = apu->pulse2.reg.volume_env;
             if (apu->pulse2.envelope.decay_counter > 0)
-                apu->pulse2.envelope.decay_counter--;
+                --apu->pulse2.envelope.decay_counter;
             else if (apu->pulse2.reg.counter_halt)
                 apu->pulse2.envelope.decay_counter = 15;
         }
@@ -360,12 +381,12 @@ static void ApuClockEnvelopes(Apu *apu)
     if (!apu->noise.envelope.start)
     {
         if (apu->noise.envelope.counter > 0)
-            apu->noise.envelope.counter--;
+            --apu->noise.envelope.counter;
         else
         {
             apu->noise.envelope.counter = apu->noise.reg.volume_env;
             if (apu->noise.envelope.decay_counter > 0)
-                apu->noise.envelope.decay_counter--;
+                --apu->noise.envelope.decay_counter;
             else if (apu->noise.reg.counter_halt)
                 apu->noise.envelope.decay_counter = 15;
         }
@@ -403,7 +424,7 @@ static void ApuClockEnvelopes(Apu *apu)
 static void ApuClockTriangle(Apu *apu)
 {
     if (apu->triangle.timer.raw > 0)
-        apu->triangle.timer.raw--;
+        --apu->triangle.timer.raw;
     else
     {
         apu->triangle.timer.raw = apu->triangle.timer_period.raw;
@@ -424,7 +445,7 @@ static void ApuClockTriangle(Apu *apu)
 static void ApuClockDmc(Apu *apu)
 {
     if (apu->dmc.timer > 0)
-        apu->dmc.timer--;
+        --apu->dmc.timer;
     else
     {
         apu->dmc.timer = apu->dmc.timer_period;
@@ -494,10 +515,7 @@ static void ApuWriteFrameCounter(Apu *apu, const uint8_t data)
     apu->frame_counter.reset = true;
 
     // Seems correct
-    if (apu->frame_counter.control.irq_inhibit)
-    {
-        apu->status.frame_irq = 0;
-    }
+    apu->status.frame_irq &= ~apu->frame_counter.control.irq_inhibit;
 }
 
 static void ApuWritePulse1Sweep(Apu *apu, const uint8_t data)
@@ -651,11 +669,11 @@ uint8_t ApuReadStatus(Apu *apu, const uint8_t bus_data)
 static void ApuClockTimers(Apu *apu)
 {
     if (apu->pulse1.timer.raw > 0)
-        apu->pulse1.timer.raw--;
+        --apu->pulse1.timer.raw;
     else
     {
         apu->pulse1.timer.raw = apu->pulse1.timer_period.raw;
-        apu->pulse1.duty_step = (apu->pulse1.duty_step + 1) & 7;
+        apu->pulse1.duty_step = (apu->pulse1.duty_step - 1) & 7;
     }
 
     if (apu->pulse1.length_counter == 0 || apu->pulse1.muting)
@@ -664,15 +682,15 @@ static void ApuClockTimers(Apu *apu)
     }
     else
     {
-        apu->pulse1.output = duty_cycle_table[apu->pulse1.reg.duty][apu->pulse1.duty_step];
+        apu->pulse1.output = duty_cycle_table[apu->swap_duty_cycles][apu->pulse1.reg.duty][apu->pulse1.duty_step];
     }
 
     if (apu->pulse2.timer.raw > 0)
-        apu->pulse2.timer.raw--;
+        --apu->pulse2.timer.raw;
     else
     {
         apu->pulse2.timer.raw = apu->pulse2.timer_period.raw;
-        apu->pulse2.duty_step = (apu->pulse2.duty_step + 1) & 7;
+        apu->pulse2.duty_step = (apu->pulse2.duty_step - 1) & 7;
     }
 
     if (apu->pulse2.length_counter == 0 || apu->pulse2.muting)
@@ -681,11 +699,11 @@ static void ApuClockTimers(Apu *apu)
     }
     else
     {
-        apu->pulse2.output = duty_cycle_table[apu->pulse2.reg.duty][apu->pulse2.duty_step];
+        apu->pulse2.output = duty_cycle_table[apu->swap_duty_cycles][apu->pulse2.reg.duty][apu->pulse2.duty_step];
     }
 
     if (apu->noise.timer.raw > 0)
-        apu->noise.timer.raw--;
+        --apu->noise.timer.raw;
     else
     {
         apu->noise.timer.raw = apu->noise.timer_period.raw;
@@ -723,7 +741,7 @@ static void ApuMixSample(Apu *apu)
     float tnd_out = 0.00851f * apu->triangle.output + 0.00494f * apu->noise.output + 0.00335f * apu->dmc.output_level;
 #else
     float pulse = 95.88 / ((8128.0 / (square1 + square2)) + 100);
-    float tnd_out = 159.79 / (1 / ((apu->triangle.output / 8227.0) + (apu->noise.output / 12241.0) + (apu->dmc.output_level / 22638.0)) + 100);
+    float tnd_out = 159.79 / ((1 / ((apu->triangle.output / 8227.0) + (apu->noise.output / 12241.0) + (apu->dmc.output_level / 22638.0))) + 100);
 #endif
     apu->mixed_sample = pulse + tnd_out;
 }
@@ -789,7 +807,7 @@ void APU_Tick(Apu *apu)
         }
         if (step.frame_interrupt)
         {
-            apu->status.frame_irq |= ~apu->frame_counter.control.irq_inhibit;
+            apu->status.frame_irq = ~apu->frame_counter.control.irq_inhibit;
             // Don't overwrite the newly set frame irq flag
             apu->clear_frame_irq = false;
         }
@@ -812,7 +830,7 @@ void APU_Tick(Apu *apu)
     ++apu->cycles;
 }
 
-void APU_Init(Apu *apu)
+void APU_Init(Apu *apu, const bool swap_duty_cycles)
 {
     memset(apu, 0, sizeof(*apu));
     ApuResetFrameCounter(apu);
@@ -820,6 +838,7 @@ void APU_Init(Apu *apu)
     apu->dmc.sample_length = 1;
     apu->dmc.empty = true;
     apu->alignment = 0;
+    apu->swap_duty_cycles = swap_duty_cycles;
 }
 
 void APU_Reset(Apu *apu)
