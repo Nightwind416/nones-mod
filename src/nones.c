@@ -11,6 +11,7 @@
 #include "system.h"
 #include "cart.h"
 #include "nones.h"
+#include "panel.h"
 
 static SDL_AudioStream *stream = NULL;
 
@@ -52,11 +53,17 @@ static void NonesDrawDebugInfo(Nones *nones, NonesInfo *info)
 
 static void NonesSetIntegerScale(Nones *nones, int scale)
 {
-    SDL_SetWindowSize(nones->window, SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale);
-    SDL_SetRenderScale(nones->renderer, scale, scale);
-    //SDL_SetRenderLogicalPresentation(nones->renderer, SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
-    // Doesn't work on Wayland...
-    SDL_SetWindowPosition(nones->window,  SDL_WINDOWPOS_CENTERED,  SDL_WINDOWPOS_CENTERED);
+    if (!nones->panel_system) return;
+    
+    // Update panel sizes based on scale
+    nones->panel_system->config.panel_width = SCREEN_WIDTH * scale;
+    nones->panel_system->config.panel_height = SCREEN_HEIGHT * scale;
+    
+    // Update layout with new sizes
+    PanelSystemUpdateLayout(nones->panel_system);
+    
+    // Center the window
+    SDL_SetWindowPosition(nones->window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 }
 
 static const int joystick_button_table[2][4] =
@@ -176,7 +183,8 @@ static void NonesInit(Nones *nones, const char *path, const char *audio_driver, 
 
     SDL_Log("SDL audio driver: %s\n", SDL_GetCurrentAudioDriver());
 
-    nones->window = SDL_CreateWindow("nones", SCREEN_WIDTH * 2, SCREEN_HEIGHT * 2, 0);
+    // Create window with 2x2 grid layout (4 panels)
+    nones->window = SDL_CreateWindow("nones - Grid Layout", SCREEN_WIDTH * 2, SCREEN_HEIGHT * 2, 0);
     if (!nones->window)
     {
         SDL_Log("Window Error: %s", SDL_GetError());
@@ -239,20 +247,29 @@ static void NonesInit(Nones *nones, const char *path, const char *audio_driver, 
 
     SDL_ResumeAudioStreamDevice(stream);
 
-    //SDL_SetRenderLogicalPresentation(nones->renderer, SCREEN_WIDTH, SCREEN_WIDTH,  SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
-    SDL_SetRenderScale(nones->renderer, 2, 2);
-
     nones->texture = SDL_CreateTexture(nones->renderer,
         SDL_PIXELFORMAT_RGBA8888,
         SDL_TEXTUREACCESS_STREAMING,
         SCREEN_WIDTH, SCREEN_HEIGHT);
 
     SDL_SetTextureScaleMode(nones->texture, SDL_SCALEMODE_NEAREST);
+    
+    // Initialize panel system
+    nones->panel_system = malloc(sizeof(PanelSystem));
+    if (nones->panel_system) {
+        PanelSystemInit(nones->panel_system, nones->window, nones->renderer);
+    }
 }
 
 static void NonesShutdown(Nones *nones)
 {
     SystemShutdown(nones->system);
+
+    // Free panel system
+    if (nones->panel_system) {
+        free(nones->panel_system);
+        nones->panel_system = NULL;
+    }
 
     // Handles textures as well, so no need to call SDL_DestroyTexture here
     SDL_DestroyRenderer(nones->renderer);
@@ -329,6 +346,11 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sa
                         case SDLK_F2:
                             NonesReset(nones);
                             break;
+                        case SDLK_F3:
+                            if (nones->panel_system) {
+                                nones->panel_system->show_settings = !nones->panel_system->show_settings;
+                            }
+                            break;
                         case SDLK_F6:
                             SystemUpdateState(nones->system, PAUSED);
                             break;
@@ -358,7 +380,14 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sa
         SDL_UnlockTexture(nones->texture);
 
         SDL_RenderClear(nones->renderer);
-        SDL_RenderTexture(nones->renderer, nones->texture, NULL, NULL);
+        
+        // Render using panel system
+        if (nones->panel_system) {
+            PanelSystemRender(nones->panel_system, nones);
+        } else {
+            // Fallback to single window rendering if panel system not initialized
+            SDL_RenderTexture(nones->renderer, nones->texture, NULL, NULL);
+        }
 
         NonesDrawDebugInfo(nones, &info);
 

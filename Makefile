@@ -11,8 +11,9 @@ ifeq ($(OS), Windows_NT)
 	CFLAGS += -Ilib/SDL3/include
 	LDFLAGS := -lm -Llib/SDL3/lib -lSDL3 -lsoxr
 else
-	# Use system SDL3 on Linux/Mac
-	LDFLAGS := -lm -lSDL3 -lsoxr
+	# Use local SDL3 if system SDL3 not available
+	CFLAGS += -Ilib/SDL3/include
+	LDFLAGS := -lm -Llib/SDL3/lib -lSDL3 -lsoxr -Wl,-rpath,lib/SDL3/lib
 endif
 
 REL_FLAGS := -O3 -flto=auto -D DISABLE_DEBUG -D DISABLE_CPU_LOG

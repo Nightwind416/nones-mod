@@ -1,6 +1,8 @@
 #ifndef NONES_H
 #define NONES_H
 
+#include "panel.h"
+
 //#define SCREEN_WIDTH 340
 //#define SCREEN_HEIGHT 260
 #define SCREEN_WIDTH 256
@@ -38,6 +40,7 @@ typedef struct {
     int num_gamepads;
     bool debug_info;
     bool quit;
+    PanelSystem *panel_system;
 } Nones;
 
 void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sample_rate, const char *path, const char *audio_driver);
