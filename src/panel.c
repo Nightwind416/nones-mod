@@ -72,23 +72,35 @@ void PanelSystemUpdateLayout(PanelSystem *panel_system)
 }
 
 // Render the game panel
-void PanelRenderGame(Panel *panel, SDL_Renderer *renderer, void *nones_data)
+void PanelRenderGame(Panel *panel, SDL_Renderer *renderer, void *context_data)
 {
-    // Extract needed fields - we get System and SDL_Texture
-    // Since we can't include nones.h due to circular dependency,
-    // we'll need to pass these separately or restructure
+    if (!context_data) {
+        // Render placeholder
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
+        SDL_RenderFillRect(renderer, &panel->rect);
+        SDL_SetRenderDrawColor(renderer, 128, 128, 128, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(renderer, panel->rect.x + 10, panel->rect.y + 10, "Game Window");
+        return;
+    }
     
-    // For now, just render a placeholder since we need to refactor
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
-    SDL_RenderFillRect(renderer, &panel->rect);
-    SDL_SetRenderDrawColor(renderer, 128, 128, 128, SDL_ALPHA_OPAQUE);
-    SDL_RenderDebugText(renderer, panel->rect.x + 10, panel->rect.y + 10, "Game Window");
+    PanelRenderContext *ctx = (PanelRenderContext *)context_data;
+    
+    if (ctx->game_texture) {
+        // Render the game texture
+        SDL_RenderTexture(renderer, ctx->game_texture, NULL, &panel->rect);
+    } else {
+        // Render placeholder
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
+        SDL_RenderFillRect(renderer, &panel->rect);
+        SDL_SetRenderDrawColor(renderer, 128, 128, 128, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(renderer, panel->rect.x + 10, panel->rect.y + 10, "Game Window");
+    }
 }
 
 // Render the map panel
-void PanelRenderMap(Panel *panel, SDL_Renderer *renderer, void *nones_data)
+void PanelRenderMap(Panel *panel, SDL_Renderer *renderer, void *context_data)
 {
-    (void)nones_data;  // Unused for now
+    (void)context_data;  // Will use this later for PPU nametable data
     
     // Set background
     SDL_SetRenderDrawColor(renderer, 20, 20, 40, SDL_ALPHA_OPAQUE);
@@ -105,12 +117,13 @@ void PanelRenderMap(Panel *panel, SDL_Renderer *renderer, void *nones_data)
     // Placeholder text
     SDL_SetRenderDrawColor(renderer, 200, 200, 200, SDL_ALPHA_OPAQUE);
     SDL_RenderDebugText(renderer, panel->rect.x + 10, panel->rect.y + 30, "(Nametable viewer)");
+    SDL_RenderDebugText(renderer, panel->rect.x + 10, panel->rect.y + 50, "Shows CHR pattern tables");
 }
 
 // Render the status panel
-void PanelRenderStatus(Panel *panel, SDL_Renderer *renderer, void *nones_data)
+void PanelRenderStatus(Panel *panel, SDL_Renderer *renderer, void *context_data)
 {
-    (void)nones_data;  // Unused for now
+    (void)context_data;  // Will use this later for CPU/PPU state
     
     // Set background
     SDL_SetRenderDrawColor(renderer, 20, 40, 20, SDL_ALPHA_OPAQUE);
@@ -127,11 +140,14 @@ void PanelRenderStatus(Panel *panel, SDL_Renderer *renderer, void *nones_data)
     // Placeholder text
     SDL_SetRenderDrawColor(renderer, 200, 200, 200, SDL_ALPHA_OPAQUE);
     SDL_RenderDebugText(renderer, panel->rect.x + 10, panel->rect.y + 30, "(CPU/PPU state)");
+    SDL_RenderDebugText(renderer, panel->rect.x + 10, panel->rect.y + 50, "Registers, cycles, etc.");
 }
 
 // Render the editor panel
-void PanelRenderEditor(Panel *panel, SDL_Renderer *renderer, void *nones_data)
+void PanelRenderEditor(Panel *panel, SDL_Renderer *renderer, void *context_data)
 {
+    (void)context_data;  // Will use this later for editor state
+    
     // Set background
     SDL_SetRenderDrawColor(renderer, 40, 20, 20, SDL_ALPHA_OPAQUE);
     SDL_RenderFillRect(renderer, &panel->rect);
@@ -147,6 +163,7 @@ void PanelRenderEditor(Panel *panel, SDL_Renderer *renderer, void *nones_data)
     // Placeholder text
     SDL_SetRenderDrawColor(renderer, 200, 200, 200, SDL_ALPHA_OPAQUE);
     SDL_RenderDebugText(renderer, panel->rect.x + 10, panel->rect.y + 40, "(Editor tools)");
+    SDL_RenderDebugText(renderer, panel->rect.x + 10, panel->rect.y + 60, "Nametable editing");
 }
 
 // Render all panels

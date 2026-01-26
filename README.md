@@ -120,7 +120,7 @@ Set the audio device sample-rate: 0 = 44100Hz (default), 1 = 48000Hz, 2 = 96000H
 
 * `1 -> 5`
 
-Set window size integer scale (1x, 2x, 3x ect. 5x max)
+Set panel size scale (1x, 2x, 3x ect. 5x max) - affects all 4 panels
 
 * `Esc`
 
@@ -134,6 +134,10 @@ Enable/Disable CPU debug stats
 
 Soft Reset
 
+* `F3`
+
+Show/Hide panel settings
+
 * `F6`
 
 Pause/Unpause
@@ -145,3 +149,14 @@ Step by one frame and pause
 * `F11`
 
 Step by one instruction and pause
+
+### Panel Layout
+
+The emulator now uses a 2x2 grid layout with 4 configurable panels:
+
+* **Top Left**: Game Window (default) - Displays the NES game output
+* **Top Right**: Map Viewer (default) - Shows nametable/pattern table data
+* **Bottom Left**: Status Window (default) - Displays CPU/PPU registers and state
+* **Bottom Right**: Map Editor (default) - Provides tools for editing nametables
+
+Press `F3` to view the current panel configuration. Future updates will allow changing panel assignments via the settings interface.

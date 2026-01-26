@@ -383,7 +383,12 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sa
         
         // Render using panel system
         if (nones->panel_system) {
-            PanelSystemRender(nones->panel_system, nones);
+            // Create rendering context for panels
+            PanelRenderContext ctx = {
+                .game_texture = nones->texture,
+                .system = nones->system
+            };
+            PanelSystemRender(nones->panel_system, &ctx);
         } else {
             // Fallback to single window rendering if panel system not initialized
             SDL_RenderTexture(nones->renderer, nones->texture, NULL, NULL);

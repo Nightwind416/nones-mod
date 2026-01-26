@@ -47,6 +47,15 @@ typedef struct {
     bool show_settings;                 // Whether to show settings UI
 } PanelSystem;
 
+// Forward declarations for context
+typedef struct System System;
+
+// Panel rendering context - contains data needed to render panels
+typedef struct {
+    SDL_Texture *game_texture;
+    System *system;
+} PanelRenderContext;
+
 // Initialize the panel system
 void PanelSystemInit(PanelSystem *panel_system, SDL_Window *window, SDL_Renderer *renderer);
 
