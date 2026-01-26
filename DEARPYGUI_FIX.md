@@ -103,8 +103,10 @@ def _build_panel_layout_configuration():
     dpg.add_text("Bottom Right:")
     
     # OR Option 2: With table for alignment
+    LABEL_COLUMN_WIDTH = 120  # Use constant for maintainability
+    
     with dpg.table(header_row=False):
-        dpg.add_table_column(width_fixed=True, init_width_or_weight=120)
+        dpg.add_table_column(width_fixed=True, init_width_or_weight=LABEL_COLUMN_WIDTH)
         dpg.add_table_column()
         
         with dpg.table_row():
