@@ -36,9 +36,9 @@ int SystemLoadCart(Arena *arena, System *system, const char *path)
     return CartLoad(arena, system->cart, path);
 }
 
-void SystemInit(System *system, uint32_t **buffers)
+void SystemInit(System *system, uint32_t **buffers, const uint32_t buffer_size)
 {
-    PPU_Init(system->ppu, system->cart->mirroring, buffers);
+    PPU_Init(system->ppu, system->cart->mirroring, buffers, buffer_size);
     APU_Init(system->apu);
     CPU_Init(system->cpu);
 }
@@ -115,7 +115,6 @@ static void SystemStartOamDma(System *system, const uint8_t page_num, const uint
             SystemTick();
             ApuDmcDmaUpdate(system->apu);
             system->dmc_dma_triggered = false;
-
         }
         else if (system_ptr->dmc_dma_triggered && system_ptr->oam_dma_bytes_remaining == 2)
         {
@@ -217,6 +216,33 @@ uint8_t BusRead(const uint16_t addr)
     // Extract A15, A14, and A13
     uint8_t region = (addr >> 13) & 0x7;
 
+    if (ApuRegsActivated(system_ptr))
+    {
+        uint8_t val = addr & 0x1F;
+        if (val == 0x15)
+        {
+            return ApuReadStatus(system_ptr->apu, system_ptr->bus_data);
+        }
+        else if (val == 0x16)
+        {
+            // Clear bits 0–4
+            system_ptr->bus_data &= 0xE0;
+            // Update bits 0–4
+            system_ptr->bus_data |= (ReadJoyPadReg(system_ptr->joy_pad1) & 0x1F);
+        }
+        else if (val == 0x17)
+        {
+            // Clear bits 0–4
+            system_ptr->bus_data &= 0xE0;
+            // Update bits 0–4
+            system_ptr->bus_data |= (ReadJoyPadReg(system_ptr->joy_pad2) & 0x1F);
+        }
+        else if (addr >= 0x4000 && addr < 0x6000)
+        {
+            DEBUG_LOG("Open bus read! addr: 0x%04X bus: %X\n", addr, system_ptr->bus_data);
+        }
+    }
+
     switch (region)
     {
         // $0000 - $1FFF
@@ -226,39 +252,8 @@ uint8_t BusRead(const uint16_t addr)
 
         // $2000 - $3FFF
         case 0x1:
-        {
             system_ptr->bus_data = ReadPPURegister(system_ptr->ppu, addr);
             break;
-        }
-        // $4000 - $5FFF
-        case 0x2:
-            if (addr < 0x4018 && ApuRegsActivated(system_ptr))
-            {
-                if (addr == 0x4016)
-                {
-                    // Clear bits 0–4
-                    system_ptr->bus_data &= 0xE0;
-                    // Update bits 0–4
-                    system_ptr->bus_data |= (ReadJoyPadReg(system_ptr->joy_pad1) & 0x1F);
-                }
-                else if (addr == 0x4017)
-                {
-                    // Clear bits 0–4
-                    system_ptr->bus_data &= 0xE0;
-                    // Update bits 0–4
-                    system_ptr->bus_data |= (ReadJoyPadReg(system_ptr->joy_pad2) & 0x1F);
-                }
-                else if (addr == 0x4015)
-                {
-                    return ApuReadStatus(system_ptr->apu, system_ptr->bus_data);
-                }
-                break;
-            }
-            else
-            {
-                DEBUG_LOG("Trying to read value at 0x%04X\n", addr);
-                break;
-            }
 
         case 0x3:  // $6000 - $7FFF
             system_ptr->bus_data = SWramRead(system_ptr, addr);
@@ -372,6 +367,9 @@ uint8_t PpuBusReadChrRom(const uint16_t addr)
 
 void PpuBusWriteChrRam(const uint16_t addr, const uint8_t data)
 {
+    if (!system_ptr->cart->chr_rom.is_ram)
+        return;
+
     ChrRom *chr_rom = &system_ptr->cart->chr_rom;
     chr_rom->data[addr & (chr_rom->size - 1)] = data;
 }
@@ -407,27 +405,22 @@ bool SystemPollAllIrqs(void)
     return PollApuIrqs(system_ptr->apu) || PollMapperIrq();
 }
 
-void SystemSetNmiPin(void)
-{
-    system_ptr->cpu->nmi_pin = ~(system_ptr->ppu->ctrl.vblank_nmi & system_ptr->ppu->status.vblank);
-}
-
 // The PPU pulls /NMI low if and only if both vblank_flag and NMI_output are true.
-static uint8_t SystemReadNmiPin(void)
+static uint8_t SystemReadNmiPin(System *system)
 {
-    return ~(system_ptr->ppu->ctrl.vblank_nmi & system_ptr->ppu->status.vblank);
+    return ~(system->ppu->ctrl.vblank_nmi & system->ppu->status.vblank);
 }
 
-void SystemPollNmi(void)
+static void SystemPollNmi(System *system)
 {
-    uint8_t current_nmi_pin = SystemReadNmiPin();
-    if (~current_nmi_pin & system_ptr->cpu->nmi_pin)
+    uint8_t current_nmi_pin = SystemReadNmiPin(system);
+    if (~current_nmi_pin & system->cpu->nmi_pin)
     {
-        system_ptr->cpu->nmi_pending = true;
+        system->cpu->nmi_pending = true;
         //printf("NMI falling edge at frame: %ld ppu cycle: %d scanline:%d\n",
         //        system_ptr->ppu->frames, system_ptr->ppu->cycle_counter, system_ptr->ppu->scanline);
     }
-    system_ptr->cpu->nmi_pin = current_nmi_pin;
+    system->cpu->nmi_pin = current_nmi_pin;
 }
 
 void SystemTick(void)
@@ -435,7 +428,7 @@ void SystemTick(void)
     APU_Tick(system_ptr->apu);
 
     PPU_Tick(system_ptr->ppu);
-    SystemPollNmi();
+    SystemPollNmi(system_ptr);
     PPU_Tick(system_ptr->ppu);
     PPU_Tick(system_ptr->ppu);
     PpuUpdateRenderingState(system_ptr->ppu);
