@@ -10,6 +10,10 @@ Modifications made by [@Nightwind416] in 2025
 * API added to allow external access to video, audio, input, and other items.
 * Package as DLL
 
+### Using with Python/Dear PyGui
+
+If you're integrating this emulator library into a Python application using Dear PyGui, please see [DEARPYGUI_FIX.md](DEARPYGUI_FIX.md) for important compatibility information and fixes for common issues.
+
 ### Current State
 
 Games that use the following mapper chips are supported:
