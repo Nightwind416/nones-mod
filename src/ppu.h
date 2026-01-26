@@ -35,8 +35,7 @@ typedef enum
     PPU_DATA   = 7
 } PpuIoReg;
 
-typedef enum
-{
+typedef enum {
     NAMETABLE_HORIZONTAL,
     NAMETABLE_VERTICAL,
     NAMETABLE_SINGLE_SCREEN,
@@ -52,11 +51,11 @@ typedef enum
 
 typedef enum
 {
-    PPU_RENDERER_BEGIN = 0,
-    PPU_RENDERER_END = 239,
-    PPU_RENDERER_POST = 240,
-    PPU_RENDERER_PRE = 261
-} PpuRendererStages;
+    PPU_RENDER_BEGIN = 1,
+    PPU_RENDER_END = 239,
+    PPU_POST_RENDER = 241,
+    PPU_PRE_RENDER = 261
+} PpuStages;
 
 typedef union
 {
@@ -244,11 +243,11 @@ typedef struct
 
 typedef struct
 {
-    Sprite oam1[64];
-    Sprite oam2[8];
+    Sprite sprites[64];
     SpriteFifo fifo[8];
-    uint8_t palettes[32];
+    int64_t cycles;
     uint64_t frames;
+    int32_t cycles_to_run;
     int32_t cycle_counter;
     int scanline;
     uint32_t bus_addr;
@@ -257,7 +256,6 @@ typedef struct
     // buffer 0 is the backbuffer
     // buffer 1 is the frontbuffer
     uint32_t *buffers[2];
-    uint32_t buffer_size;
 
     // PPU internel regs
     struct {
@@ -272,7 +270,7 @@ typedef struct
         bool w;
     };
 
-    NameTableMirror mirroring;
+    NameTableMirror nt_mirror_mode;
     int ext_input;
 
     ShiftReg bg_shift_low;
@@ -282,12 +280,7 @@ typedef struct
 
     // Per scanline
     int found_sprites;
-    int prev_found_sprites;
-    int sprite_y_offset;
-    uint32_t sprite_addr;
     bool sprite0_loaded;
-    bool prev_sprite0_loaded;
-    bool sprite_in_range;
     
     bool rendering;
     bool clear_vblank;
@@ -297,12 +290,7 @@ typedef struct
     PpuCtrl ctrl;
     PpuMask mask;
     PpuStatus status;
-    uint8_t oam1_addr;
-    uint8_t oam2_addr;
-    bool oam2_addr_overflow;
-    bool sprite_eval_done;
-    uint8_t sprite_timer;
-    uint8_t oam_buffer;
+    uint8_t oam_addr;
     // Read buffer for $2007
     uint8_t buffered_data;
 
@@ -315,7 +303,7 @@ typedef struct
     uint8_t io_bus;
 } Ppu;
 
-void PPU_Init(Ppu *ppu, int mirroring, uint32_t **buffers, uint32_t buffer_size);
+void PPU_Init(Ppu *ppu, int name_table_layout, uint32_t **buffers);
 void PPU_Tick(Ppu *ppu);
 void PPU_Reset(Ppu *ppu);
 void PpuUpdateRenderingState(Ppu *ppu);
