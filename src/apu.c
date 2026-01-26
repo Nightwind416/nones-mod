@@ -6,13 +6,18 @@
 #include <math.h>
 
 #include <SDL3/SDL.h>
+#include <soxr.h>
 
+#include "arena.h"
 #include "apu.h"
 #include "ppu.h"
 #include "system.h"
 #include "nones.h"
 
 #include "utils.h"
+
+static soxr_t soxr;
+static soxr_error_t error;
 
 //#define APU_FAST_MIXER
 
@@ -230,55 +235,30 @@ static void ApuClockLinearCounters(Apu *apu)
     //printf("Triangle linear counter: %d\n", apu->triangle.linear_counter);
 }
 
-static void UpdateTargetPeriod1(Apu *apu)
+static void ApuUpdatePulseTargetPeriod(ApuPulse *pulse, const bool pulse1)
 {
-    int delta = apu->pulse1.timer_period.raw >> apu->pulse1.sweep_reg.shift_count;
-    int target = apu->pulse1.timer_period.raw;
-    if (apu->pulse1.sweep_reg.negate)
+    const int delta = pulse->timer_period.raw >> pulse->sweep_reg.shift_count;
+    int target = pulse->timer_period.raw;
+
+    if (pulse->sweep_reg.negate)
     {
-        target -= (delta + 1); 
+        target -= (delta + pulse1); 
     }
     else
     {
         target += delta;
     }
 
-    if (target > 0x7FF || apu->pulse1.timer_period.raw < 8)
+    if (target > 0x7FF || pulse->timer_period.raw < 8)
     {
-        apu->pulse1.muting = true;
+        pulse->muting = true;
     }
     else
     {
-        apu->pulse1.muting = false;
+        pulse->muting = false;
     }
 
-    apu->pulse1.target_period = MAX(0, target);
-}
-
-static void UpdateTargetPeriod2(Apu *apu)
-{
-    int delta = apu->pulse2.timer_period.raw >> apu->pulse2.sweep_reg.shift_count;
-    int target = apu->pulse2.timer_period.raw;
-
-    if (apu->pulse2.sweep_reg.negate)
-    {
-        target -= delta;
-    }
-    else
-    {
-        target += delta;
-    }
-
-    if (target > 0x7FF || apu->pulse2.timer_period.raw < 8)
-    {
-        apu->pulse2.muting = true;
-    }
-    else
-    {
-        apu->pulse2.muting = false;
-    }
-
-    apu->pulse2.target_period = MAX(0, target);
+    pulse->target_period = MAX(0, target);
 }
 
 static void ApuWriteDmcControl(Apu *apu, uint8_t data)
@@ -297,13 +277,13 @@ static void ApuClockSweeps(Apu *apu)
     if (!apu->pulse1.sweep_counter && apu->pulse1.sweep_reg.enabled && apu->pulse1.sweep_reg.shift_count && !apu->pulse1.muting)
     {
         apu->pulse1.timer_period.raw = apu->pulse1.target_period;
-        UpdateTargetPeriod1(apu);
+        ApuUpdatePulseTargetPeriod(&apu->pulse1, true);
     }
     if (!apu->pulse1.sweep_counter || apu->pulse1.reload)
     {
         apu->pulse1.sweep_counter = apu->pulse1.sweep_reg.devider_period;
         apu->pulse1.reload = false;
-        UpdateTargetPeriod1(apu);
+        ApuUpdatePulseTargetPeriod(&apu->pulse1, true);
     }
     else
     {
@@ -316,17 +296,16 @@ static void ApuClockSweeps(Apu *apu)
     //    printf("After Pulse 1 timer raw: %d\n", apu->pulse1.timer.raw);
     //}
 
-    //UpdateTargetPeriod2(apu);
     if (!apu->pulse2.sweep_counter && apu->pulse2.sweep_reg.enabled && apu->pulse2.sweep_reg.shift_count && !apu->pulse2.muting)
     {
         apu->pulse2.timer_period.raw = apu->pulse2.target_period;
-        UpdateTargetPeriod2(apu);
+        ApuUpdatePulseTargetPeriod(&apu->pulse2, false);
     }
     if (!apu->pulse2.sweep_counter || apu->pulse2.reload)
     {
         apu->pulse2.sweep_counter = apu->pulse2.sweep_reg.devider_period;
         apu->pulse2.reload = false;
-        UpdateTargetPeriod2(apu);
+        ApuUpdatePulseTargetPeriod(&apu->pulse2, false);
     }
     else
     {
@@ -334,69 +313,34 @@ static void ApuClockSweeps(Apu *apu)
     }
 }
 
+static void ApuClockEnvelope(ApuEnvelope *envelope, const uint8_t volume, const bool counter_halt)
+{
+    if (!envelope->start)
+    {
+        if (envelope->counter > 0)
+            --envelope->counter;
+        else
+        {
+            envelope->counter = volume;
+            if (envelope->decay_counter > 0)
+                --envelope->decay_counter;
+            else if (counter_halt)
+                envelope->decay_counter = 15;
+        }
+    }
+    else
+    {
+        envelope->start = false;
+        envelope->decay_counter = 15;
+        envelope->counter = volume;
+    }
+}
+
 static void ApuClockEnvelopes(Apu *apu)
 {
-    if (!apu->pulse1.envelope.start)
-    {
-        if (apu->pulse1.envelope.counter > 0)
-            --apu->pulse1.envelope.counter;
-        else
-        {
-            apu->pulse1.envelope.counter = apu->pulse1.reg.volume_env;
-            if (apu->pulse1.envelope.decay_counter > 0)
-                --apu->pulse1.envelope.decay_counter;
-            else if (apu->pulse1.reg.counter_halt)
-                apu->pulse1.envelope.decay_counter = 15;
-        }
-    }
-    else
-    {
-        apu->pulse1.envelope.start = false;
-        apu->pulse1.envelope.decay_counter = 15;
-        apu->pulse1.envelope.counter = apu->pulse1.reg.volume_env;
-    }
-
-    //printf("Pulse 1 envelope decay: %d\n", apu->pulse1.envelope.decay_counter);
-    //printf("Pulse 1 envelope counter: %d\n", apu->pulse1.envelope.counter);
-    if (!apu->pulse2.envelope.start)
-    {
-        if (apu->pulse2.envelope.counter > 0)
-            --apu->pulse2.envelope.counter;
-        else
-        {
-            apu->pulse2.envelope.counter = apu->pulse2.reg.volume_env;
-            if (apu->pulse2.envelope.decay_counter > 0)
-                --apu->pulse2.envelope.decay_counter;
-            else if (apu->pulse2.reg.counter_halt)
-                apu->pulse2.envelope.decay_counter = 15;
-        }
-    }
-    else
-    {
-        apu->pulse2.envelope.start = false;
-        apu->pulse2.envelope.decay_counter = 15;
-        apu->pulse2.envelope.counter = apu->pulse2.reg.volume_env;
-    }
-
-    if (!apu->noise.envelope.start)
-    {
-        if (apu->noise.envelope.counter > 0)
-            --apu->noise.envelope.counter;
-        else
-        {
-            apu->noise.envelope.counter = apu->noise.reg.volume_env;
-            if (apu->noise.envelope.decay_counter > 0)
-                --apu->noise.envelope.decay_counter;
-            else if (apu->noise.reg.counter_halt)
-                apu->noise.envelope.decay_counter = 15;
-        }
-    }
-    else
-    {
-        apu->noise.envelope.start = false;
-        apu->noise.envelope.decay_counter = 15;
-        apu->noise.envelope.counter = apu->noise.reg.volume_env;
-    }
+    ApuClockEnvelope(&apu->pulse1.envelope, apu->pulse1.reg.volume_env, apu->pulse1.reg.counter_halt);
+    ApuClockEnvelope(&apu->pulse2.envelope, apu->pulse2.reg.volume_env, apu->pulse2.reg.counter_halt);
+    ApuClockEnvelope(&apu->noise.envelope, apu->noise.reg.volume_env, apu->noise.reg.counter_halt);
 
     //DEBUG_LOG("Pulse 1 envelope counter: %d\n", apu->pulse1.envelope.counter);
     //DEBUG_LOG("Pulse 1 envelope decay counter: %d\n", apu->pulse1.envelope.decay_counter);
@@ -522,7 +466,7 @@ static void ApuWritePulse1Sweep(Apu *apu, const uint8_t data)
 {
     apu->pulse1.sweep_reg.raw = data;
     apu->pulse1.reload = true;
-    UpdateTargetPeriod1(apu);
+    ApuUpdatePulseTargetPeriod(&apu->pulse1, true);
 
     //printf("Set pulse 1 sweep enabled: %d\n", apu->pulse1.sweep_reg.enabled);
     //printf("Set pulse 1 sweep shift count: %d\n", apu->pulse1.sweep_reg.shift_count);
@@ -534,7 +478,7 @@ static void ApuWritePulse2Sweep(Apu *apu, const uint8_t data)
 {
     apu->pulse2.sweep_reg.raw = data;
     apu->pulse2.reload = true;
-    UpdateTargetPeriod2(apu);
+    ApuUpdatePulseTargetPeriod(&apu->pulse2, false);
 
     //printf("Set pulse 2 sweep enabled: %d\n", apu->pulse2.sweep.enabled);
     //printf("Set pulse 2 sweep shift count: %d\n", apu->pulse2.sweep.shift_count);
@@ -574,12 +518,12 @@ void WriteAPURegister(Apu *apu, const uint16_t addr, const uint8_t data)
             break;
         case APU_PULSE_1_TIMER_LOW:
             apu->pulse1.timer_period.low = data;
-            UpdateTargetPeriod1(apu);
+            ApuUpdatePulseTargetPeriod(&apu->pulse1, true);
             break;
         case APU_PULSE_1_TIMER_HIGH:
             apu->pulse1.timer_period.high = data & 0x7;
             ApuWritePulse1LengthCounter(apu, data >> 3);
-            UpdateTargetPeriod1(apu);
+            ApuUpdatePulseTargetPeriod(&apu->pulse1, true);
             apu->pulse1.envelope.start = true;
             apu->pulse1.duty_step = 0;
             break;
@@ -591,12 +535,12 @@ void WriteAPURegister(Apu *apu, const uint16_t addr, const uint8_t data)
             break;
         case APU_PULSE_2_TIMER_LOW:
             apu->pulse2.timer_period.low = data;
-            UpdateTargetPeriod2(apu);
+            ApuUpdatePulseTargetPeriod(&apu->pulse2, false);
             break;
         case APU_PULSE_2_TIMER_HIGH:
             apu->pulse2.timer_period.high = data & 0x7;
             ApuWritePulse2LengthCounter(apu, data >> 3);
-            UpdateTargetPeriod2(apu);
+            ApuUpdatePulseTargetPeriod(&apu->pulse2, false);
             apu->pulse2.envelope.start = true;
             apu->pulse2.duty_step = 0;
             break;
@@ -676,7 +620,7 @@ static void ApuClockTimers(Apu *apu)
         apu->pulse1.duty_step = (apu->pulse1.duty_step - 1) & 7;
     }
 
-    if (apu->pulse1.length_counter == 0 || apu->pulse1.muting)
+    if (!apu->pulse1.length_counter || apu->pulse1.muting)
     {
         apu->pulse1.output = 0;
     }
@@ -693,7 +637,7 @@ static void ApuClockTimers(Apu *apu)
         apu->pulse2.duty_step = (apu->pulse2.duty_step - 1) & 7;
     }
 
-    if (apu->pulse2.length_counter == 0 || apu->pulse2.muting)
+    if (!apu->pulse2.length_counter || apu->pulse2.muting)
     {
         apu->pulse2.output = 0;
     }
@@ -731,6 +675,19 @@ static void ApuClockTimers(Apu *apu)
     }
 }
 
+// This and ApplyFilter are technically for LPF, but to simplify things; it is used for HPF as well
+static float ComputeFilterAlpha(float freq, float cutoff)
+{
+    double dt = 1.0 / freq;
+    double rc = 1.0 / (2.0 * M_PI * cutoff);
+    return dt / (rc + dt);
+}
+
+static float ApplyFilter(float sample, float prev_sample, float alpha)
+{
+    return alpha * sample + (1.0 - alpha) * prev_sample;
+}
+
 static void ApuMixSample(Apu *apu)
 {
     float square1 = apu->pulse1.output * apu->pulse1.volume;
@@ -741,9 +698,14 @@ static void ApuMixSample(Apu *apu)
     float tnd_out = 0.00851f * apu->triangle.output + 0.00494f * apu->noise.output + 0.00335f * apu->dmc.output_level;
 #else
     float pulse = 95.88 / ((8128.0 / (square1 + square2)) + 100);
-    float tnd_out = 159.79 / ((1 / ((apu->triangle.output / 8227.0) + (apu->noise.output / 12241.0) + (apu->dmc.output_level / 22638.0))) + 100);
+    float tnd = 1 / ((apu->triangle.output / 8227.0) + (apu->noise.output / 12241.0) + (apu->dmc.output_level / 22638.0));
+    float tnd_out = 159.79 / (tnd + 100);
 #endif
-    apu->mixed_sample = pulse + tnd_out;
+    float raw_sample = pulse + tnd_out;
+    // Apply a HPF to fix the the DC offset without affecting the FR too much
+    apu->mixer.hpf_sample = ApplyFilter(raw_sample, apu->mixer.hpf_sample, apu->mixer.hpf_alpha);
+    // Apply a LPF just for the buffer used as the input for soxr, could also just make this lowpass cutoff at 14khz
+    apu->mixer.sample = ApplyFilter(raw_sample - apu->mixer.hpf_sample, apu->mixer.sample, apu->mixer.lpf_alpha);
 }
 
 static void ApuGetClock(Apu *apu)
@@ -771,13 +733,25 @@ static void ApuPutClock(Apu *apu)
     ApuClockDmc(apu);
     ApuMixSample(apu);
 
-    if (apu->current_sample == 14890)
+    if (++apu->mixer.accum >= apu->mixer.accum_delta)
     {
-        NonesPutSoundData(apu);
-        apu->current_sample = 0;
-    }
+        apu->mixer.accum -= apu->mixer.accum_delta;
 
-    apu->buffer[apu->current_sample++] = apu->mixed_sample;
+        apu->mixer.input_buffer[apu->mixer.input_index++] = apu->mixer.sample;
+        if (apu->mixer.input_index == apu->mixer.input_len)
+        {
+            size_t odone;
+            error = soxr_process(
+                soxr,
+                apu->mixer.input_buffer, apu->mixer.input_len,
+                NULL,
+                apu->mixer.output_buffer, apu->mixer.output_len,
+                &odone
+            );
+            apu->mixer.input_index = 0;
+            NonesPutSoundData(apu->mixer.output_buffer, apu->mixer.output_size);
+        }
+    }
 }
 
 void APU_Tick(Apu *apu)
@@ -830,15 +804,43 @@ void APU_Tick(Apu *apu)
     ++apu->cycles;
 }
 
-void APU_Init(Apu *apu, const bool swap_duty_cycles)
+void APU_Init(Apu *apu, Arena *arena, const bool swap_duty_cycles, int sample_rate)
 {
     memset(apu, 0, sizeof(*apu));
     ApuResetFrameCounter(apu);
+
+    apu->mixer.sample_rate = sample_rate;
+    const int samples_per_frame = apu->mixer.sample_rate / 60;
+    // Set the sample ratio to be used by soxr, 
+    const int soxr_sample_ratio = 3;
+    apu->mixer.input_len = samples_per_frame * soxr_sample_ratio;
+    apu->mixer.output_len = samples_per_frame;
+    apu->mixer.accum_delta = APU_CYCLES_PER_FRAME / apu->mixer.input_len;
+    apu->mixer.input_size = apu->mixer.input_len * sizeof(float);
+    apu->mixer.output_size = apu->mixer.output_len * sizeof(int16_t);
+    apu->mixer.input_buffer = ArenaPush(arena, apu->mixer.input_size);
+    apu->mixer.output_buffer = ArenaPush(arena, apu->mixer.output_size);
+    //const float max_cutoff = apu->mixer.sample_rate * soxr_sample_ratio * 0.45;
+    apu->mixer.lpf_alpha = ComputeFilterAlpha(APU_FREQ, 14000);
+    apu->mixer.hpf_alpha = ComputeFilterAlpha(APU_FREQ, 37);
+
     apu->noise.shift_reg.raw = 1;
     apu->dmc.sample_length = 1;
     apu->dmc.empty = true;
     apu->alignment = 0;
     apu->swap_duty_cycles = swap_duty_cycles;
+
+    soxr_quality_spec_t q_spec = soxr_quality_spec(SOXR_HQ, SOXR_VR);
+    soxr_io_spec_t io_spec = soxr_io_spec(SOXR_FLOAT32_I, SOXR_INT16_I);
+
+    soxr = soxr_create(apu->mixer.input_len, apu->mixer.output_len,
+                    1, &error, &io_spec, &q_spec, NULL);
+}
+
+void APU_Shutdown(Apu *apu)
+{
+    UNUSED(apu);
+    soxr_delete(soxr);
 }
 
 void APU_Reset(Apu *apu)

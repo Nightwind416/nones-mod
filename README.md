@@ -37,10 +37,16 @@ Games that use the following mapper chips are supported:
         <td align="center">AxROM</td><td align="center">7</td>
     </tr>
     <tr>
+        <td align="center">MMC2</td><td align="center">9</td>
+    </tr>
+    <tr>
         <td align="center">Color Dreams</td><td align="center">11</td>
     </tr>
     <tr>
-        <td align="center">Ninja + BNROM</td><td align="center">34</td>
+        <td align="center">Nina + BNROM</td><td align="center">34</td>
+    </tr>
+    <tr>
+        <td align="center">Camerica</td><td align="center">71</td>
     </tr>
     <tr>
         <td align="center">Nanjing</td><td align="center">163</td>
@@ -57,14 +63,14 @@ Basic gamepad support for up to two players, currently, button layout is fixed t
 
 - ##### Debian (13/trixie+ only)
 
-    `sudo apt install gcc make libsdl3-dev`
+    `sudo apt install gcc make libsdl3-dev libsoxr-dev`
 
 - ##### Fedora
 
-    `sudo dnf install gcc make SDL3-devel`
+    `sudo dnf install gcc make SDL3-devel soxr-devel`
 
 - ##### Arch
-    `sudo pacman -S gcc make sdl3`
+    `sudo pacman -S gcc make sdl3 libsoxr`
 
 2. run `make` in the project root directory to create the binary
 
@@ -72,7 +78,7 @@ Basic gamepad support for up to two players, currently, button layout is fixed t
 
 1. Install the Homebrew package manager
 
-2. Install the required dependencies `brew install gcc make sdl3`
+2. Install the required dependencies `brew install gcc make sdl3 libsoxr`
 
 3. run `make` in the project root directory to create the binary
 
@@ -80,7 +86,9 @@ Basic gamepad support for up to two players, currently, button layout is fixed t
 
 1. Install `MSYS2`
 
-2. Launch the UCRT64 environment that MSYS2 created and run the following command inside the terminal to install the required packages: `pacman -S mingw-w64-ucrt-x86_64-gcc make mingw-w64-ucrt-x86_64-sdl3 p7zip git`
+2. Launch the UCRT64 environment that MSYS2 created and run the following command inside the terminal to install the required packages:
+
+    `pacman -S mingw-w64-ucrt-x86_64-gcc make mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-libsoxr p7zip git`
 
 3. Run the following commannd to download the repo: `git clone https://github.com/purpasmart96/nones.git`
 
@@ -103,6 +111,10 @@ Enable the ppu warm up delay found on the NES-001. (Will break some famicom game
 * `--apu-swap-duty-cycles`
 
 Enable the use of swapped duty cycles for the square/pulse channels (Needed for older famiclone games)
+
+* `--sample-rate="sample-rate-mode"`
+
+Set the audio device sample-rate: 0 = 44100Hz (default), 1 = 48000Hz, 2 = 96000Hz, 3 = 192000Hz
 
 ### Hotkeys:
 

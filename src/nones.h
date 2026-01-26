@@ -33,13 +33,14 @@ typedef struct {
     SDL_Gamepad *gamepad1;
     SDL_Gamepad *gamepad2;
     SDL_JoystickID *gamepads;
+    SDL_Joystick *joystick1;
+    SDL_Joystick *joystick2;
     int num_gamepads;
-    SystemState state;
     bool debug_info;
     bool quit;
 } Nones;
 
-void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const char *path, const char *audio_driver);
-void NonesPutSoundData(Apu *apu);
+void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sample_rate, const char *path, const char *audio_driver);
+void NonesPutSoundData(int16_t *buffer, const int buffer_size);
 
 #endif

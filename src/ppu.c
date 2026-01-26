@@ -8,6 +8,7 @@
 
 #include <SDL3/SDL.h>
 
+#include "arena.h"
 #include "apu.h"
 #include "ppu.h"
 #include "cpu.h"
@@ -163,6 +164,37 @@ static Color GetSpriteColor(Ppu *ppu, const uint8_t palette_index, const uint8_t
     return color;
 }
 
+static void PpuUpdateBus(Ppu *ppu, const uint16_t addr)
+{
+    uint8_t prev_a12 = (ppu->bus_addr >> 12) & 1;
+    uint8_t new_a12 = (addr >> 12) & 1;
+    if (~prev_a12 & new_a12)
+    {
+        //printf("New addr: 0x%X Bus Addr: 0x%X PPU A12: %d scanline:%d cycle: %d\n", addr, ppu->bus_addr, new_a12, ppu->scanline, ppu->cycle_counter);
+        PpuClockMMC3();
+    }
+    ppu->bus_addr = addr;
+}
+
+static uint8_t PpuReadChr(Ppu *ppu, const uint16_t addr)
+{
+    PpuUpdateBus(ppu, addr);
+    mmc5.prev_addr = addr;
+    return PpuBusReadChrRom(addr);
+}
+
+static void PpuCopyTtoV(Ppu *ppu)
+{
+    const uint8_t prev_a12 = ppu->v.raw_bits.bit12;
+    // Transfer t to v
+    ppu->v.raw = ppu->t.raw;
+    if (~prev_a12 & ppu->v.raw_bits.bit12)
+        PpuClockMMC3();
+
+    ppu->copy_t_delay = 2;
+    ppu->copy_t = false;
+}
+
 void PPU_WriteAddrReg(Ppu *ppu, const uint8_t value)
 {
     if (!ppu->w)
@@ -173,13 +205,9 @@ void PPU_WriteAddrReg(Ppu *ppu, const uint8_t value)
     }
     else
     {
-        const uint8_t prev_a12 = ppu->v.raw_bits.bit12;
         // Set low byte of t
         ppu->t.writing.low = value;
-        // Transfer t to v
-        ppu->v.raw = ppu->t.raw;
-        if (~prev_a12 & ppu->v.raw_bits.bit12)
-            PpuClockMMC3();
+        ppu->copy_t = true;
     }
     ppu->w = !ppu->w;
 }
@@ -191,6 +219,7 @@ static void PpuNametableWrite(Ppu *ppu, uint16_t addr, uint8_t data)
 
 static uint8_t PpuNametableRead(Ppu *ppu, uint16_t addr)
 {
+    PpuClockMMC5(addr);
     return nametables[ppu->v.scrolling.name_table_sel][addr & 0x3FF];
 }
 
@@ -321,24 +350,9 @@ uint8_t PPU_ReadStatus(Ppu *ppu)
     return ret_status.raw;
 }
 
-static uint8_t PpuReadChr(Ppu *ppu, const uint16_t addr)
-{
-    uint8_t prev_a12 = (ppu->bus_addr >> 12) & 1;
-    uint8_t new_a12 = (addr >> 12) & 1;
-    if (~prev_a12 & new_a12)
-    {
-        //printf("PPU A12: %d scanline:%d cycle: %d\n", new_a12, ppu->scanline, ppu->cycle_counter);
-        PpuClockMMC3();
-    }
-    ppu->bus_addr = addr;
-    return PpuBusReadChrRom(addr);
-}
-
 uint8_t PPU_ReadData(Ppu *ppu)
 {
-    const uint16_t prev_a12 = ppu->v.raw_bits.bit12;
     uint16_t addr = ppu->v.raw & 0x3FFF;
-
     uint8_t data = 0;
 
     switch (addr >> 12)
@@ -378,12 +392,13 @@ uint8_t PPU_ReadData(Ppu *ppu)
     }
     else
     {
+        const uint16_t prev_a12 = ppu->v.raw_bits.bit12;
         // Auto-increment address
         ppu->v.raw += ppu->ctrl.vram_addr_inc ? 32 : 1;
+        if (~prev_a12 & ppu->v.raw_bits.bit12)
+            PpuClockMMC3();
     }
 
-    if (~prev_a12 & ppu->v.raw_bits.bit12)
-        PpuClockMMC3();
     return data;
 }
 
@@ -439,20 +454,17 @@ void WritePPURegister(Ppu *ppu, const uint16_t addr, const uint8_t data)
             break;
         case OAM_DATA:
         {
-            if (!ppu->rendering || (ppu->scanline > 239 && ppu->scanline < 261))
+            if (ppu->rendering && (ppu->scanline < 240 || ppu->scanline == 261))
             {
-                ppu->oam1[ppu->oam1_addr >> 2].raw[ppu->oam1_addr & 3] = data;
-                ppu->sprite_eval_done |= ppu->oam1_addr == 255;
-                ++ppu->oam1_addr;
+                ppu->sprite_eval.done |= ppu->oam1_addr > 251;
+                ppu->oam1_addr += 4;
+                ppu->oam1_addr &= 0xFC;
             }
             else
             {
-                ppu->sprite_eval_done |= ppu->oam1_addr > 251;
-                ppu->oam1_addr += 4;
-                if (ppu->rendering && (ppu->scanline < 240 || ppu->scanline == 261))
-                {
-                    ppu->oam1_addr &= 0xFC;
-                }
+                ppu->oam1[ppu->oam1_addr >> 2].raw[ppu->oam1_addr & 3] = data;
+                ppu->sprite_eval.done |= ppu->oam1_addr == 255;
+                ++ppu->oam1_addr;
             }
             break;
         }
@@ -469,20 +481,36 @@ void WritePPURegister(Ppu *ppu, const uint16_t addr, const uint8_t data)
     ppu->io_bus = data;
 }
 
-// Set the mirroring mode for the nametables
-// Note that mirroring is the opposite of arrangement
-void PpuSetMirroring(NameTableMirror mode, int page)
+void PpuSetNameTable(int nt, int mode)
 {
     switch (mode)
     {
-        case NAMETABLE_HORIZONTAL:
+        case 0:
+        case 1:
+            nametables[nt] = &vram[mode * 0x400];
+            break;
+        case 2:
+            nametables[nt] = &mmc5.ext_ram[0];
+            break;
+        default:
+            DEBUG_LOG("Unsupported NT mode! %d\n", mode);
+            break;
+    }
+}
+
+// Set the arrangement mode for the nametables
+// Note that arrangement is the inverse of mirroring
+void PpuSetArrangement(NameTableArrangement mode, int page)
+{
+    switch (mode)
+    {
+        case NAMETABLE_VERTICAL:
             nametables[0] = &vram[0x000];  // NT0 (0x2000)
             nametables[1] = &vram[0x000];  // NT0 (Mirrored at 0x2400)
             nametables[2] = &vram[0x400];  // NT1 (0x2800)
             nametables[3] = &vram[0x400];  // NT1 (Mirrored at 0x2C00)
             break;
-        
-        case NAMETABLE_VERTICAL:
+        case NAMETABLE_HORIZONTAL:
             nametables[0] = &vram[0x000];  // NT0 (0x2000)
             nametables[1] = &vram[0x400];  // NT1 (0x2400)
             nametables[2] = &vram[0x000];  // NT0 (Mirrored at 0x2800)
@@ -494,23 +522,29 @@ void PpuSetMirroring(NameTableMirror mode, int page)
             nametables[2] = &vram[0x400 * page];
             nametables[3] = &vram[0x400 * page];
             break;
-
+        case NAMETABLE_FOUR_SCREEN:
+            nametables[0] = &vram[0x000];  // NT0 (0x2000)
+            nametables[1] = &vram[0x400];  // NT1 (0x2400)
+            nametables[2] = &mmc5.ext_ram[0x000];  // NT0 (0x2800)
+            nametables[3] = &mmc5.ext_ram[0x400];  // NT1 (0x2C00)
+            break;
         default:
-            printf("Unimplemented Nametable mirroring mode %d detected!\n", mode);
+            printf("Unimplemented Nametable arrangement mode %d detected!\n", mode);
             break;
     }
 }
 
-void PPU_Init(Ppu *ppu, int mirroring, bool warmup, uint32_t **buffers, const uint32_t buffer_size)
+void PPU_Init(Ppu *ppu, int arrangement, bool warmup, uint32_t **buffers, const uint32_t buffer_size)
 {
     memset(ppu, 0, sizeof(*ppu));
-    ppu->mirroring = mirroring;
-    PpuSetMirroring(ppu->mirroring, 0);
+    ppu->arrangement = arrangement;
+    PpuSetArrangement(ppu->arrangement, 0);
     ppu->rendering = false;
     ppu->buffers[0] = buffers[0];
     ppu->buffers[1] = buffers[1];
     ppu->buffer_size = buffer_size;
     ppu->ext_input = 0;
+    ppu->copy_t_delay = 2;
     ppu->warmup = warmup;
     //ppu->status.open_bus = 0x1C;
 }
@@ -527,10 +561,11 @@ static void PpuResetOAM2(Ppu *ppu)
 {
     ppu->oam_buffer = 0xFF;
     memset(ppu->oam2, 0xFF, sizeof(ppu->oam2));
-    ppu->sprite_eval_done = false;
-    ppu->oam2_addr_overflow = false;
+    ppu->sprite_eval.done = false;
+    ppu->sprite_eval.oam2_overflow = false;
     ppu->oam2_addr = 0;
-    ppu->sprite_timer = 0;
+    ppu->sprite_eval.timer = 0;
+    ppu->sprite_in_range = false;
 }
 
 static void PpuSpriteRangeCheck(Ppu *ppu)
@@ -542,65 +577,47 @@ static void PpuSpriteRangeCheck(Ppu *ppu)
 
 static void PpuSpritesEval(Ppu *ppu)
 {
-    const int sprite_num = ppu->oam1_addr >> 2;
-    Sprite *curr_sprite = &ppu->oam1[sprite_num];
-
     if (ppu->cycle_counter & 1)
     {
-        ppu->oam_buffer = curr_sprite->raw[ppu->oam1_addr & 3];
+        ppu->oam_buffer = ppu->oam1[ppu->oam1_addr >> 2].raw[ppu->oam1_addr & 3];
     }
     else
     {
         PpuSpriteRangeCheck(ppu);
-        if (ppu->sprite_eval_done || ppu->oam2_addr_overflow || ppu->found_sprites == 8)
+        if (ppu->sprite_eval.done || ppu->sprite_eval.oam2_overflow)
         {
-            ppu->oam_buffer = ppu->oam2[ppu->oam2_addr & 7].raw[ppu->oam2_addr & 3];
+            ppu->oam_buffer = ppu->oam2[ppu->oam2_addr >> 2].raw[ppu->oam2_addr & 3];
         }
         else
         {
-            ppu->oam2[ppu->found_sprites].raw[ppu->oam2_addr & 3] = ppu->oam_buffer;
+            ppu->oam2[ppu->oam2_addr >> 2].raw[ppu->oam2_addr & 3] = ppu->oam_buffer;
         }
 
-        if (ppu->sprite_in_range && !ppu->sprite_eval_done)
+        // Are we doing a +4 increment or a +1 increment?
+        if ((ppu->sprite_in_range || ppu->sprite_eval.timer) && !ppu->sprite_eval.done)
         {
-            //printf("Found sprite %d: x: %d y: %d dot: %d\n", sprite_num, curr_sprite->x, curr_sprite->y, ppu->cycle_counter);
-            if (ppu->found_sprites == 8)
+            if (ppu->found_sprites == 8 && ppu->sprite_in_range)
             {
                 ppu->status.sprite_overflow = 1;
-                ppu->sprite_eval_done = true;
-                //printf("Sprite Overflow! %d: x: %d y: %d dot: %d\n", sprite_num, curr_sprite->x, curr_sprite->y, ppu->cycle_counter);
-                //ppu->oam1_addr += 4;
-                return;
+                ppu->sprite_eval.done = true;
             }
 
-            if (ppu->cycle_counter == 66)
-                ppu->sprite0_loaded = true;
-
-            ppu->sprite_eval_done |= ppu->oam1_addr == 255;
-            ppu->oam2_addr_overflow |= ppu->oam2_addr == 255;
-            ++ppu->oam1_addr;
-            ++ppu->oam2_addr;
-            ++ppu->sprite_timer;
-            ppu->sprite_timer &= 3;
-            if (!ppu->sprite_timer)
-                ++ppu->found_sprites;
-        }
-        else if (ppu->sprite_timer)
-        {
-            ppu->sprite_eval_done |= ppu->oam1_addr == 255;
-            ppu->oam2_addr_overflow |= ppu->oam2_addr == 255;
+            ppu->sprite0_loaded |= ppu->cycle_counter == 66;
+            ppu->sprite_eval.done |= ppu->oam1_addr == 255;
+            ppu->sprite_eval.oam2_overflow |= ppu->oam2_addr == 31;
 
             ++ppu->oam1_addr;
-            ++ppu->oam2_addr;
-            ++ppu->sprite_timer;
-            ppu->sprite_timer &= 3;
-            if (!ppu->sprite_timer)
+            ppu->oam2_addr = (ppu->oam2_addr + 1) & 0x1F;
+            ++ppu->sprite_eval.timer;
+            ppu->sprite_eval.timer &= 3;
+            if (!ppu->sprite_eval.timer)
                 ++ppu->found_sprites;
         }
         else
         {
-            ppu->sprite_eval_done |= ppu->oam1_addr > 251;
+            ppu->sprite_eval.done |= ppu->oam1_addr > 251;
             ppu->oam1_addr += 4;
+            ppu->oam1_addr &= 0xFC;
         }
     }
 }
@@ -695,8 +712,7 @@ static void PpuRender(Ppu *ppu, int scanline)
         {
             PpuFetchShifters(ppu);
             // TODO: should set the ppu bus addr here
-            const uint16_t tile_addr = 0x2000 | (ppu->v.raw & 0x0FFF);
-            ppu->tile_id = PpuNametableRead(ppu, tile_addr);
+            ppu->tile_id = PpuNametableRead(ppu, (0x2000 | (ppu->v.raw & 0x0FFF)));
             break;
         }
         case 2:
@@ -784,8 +800,14 @@ static void PpuFetchSprite(Ppu *ppu, int sprite_num)
 
     switch (effective_cycle & 7)
     {
+        case 1:
+        {
+            PpuNametableRead(ppu, 0x2000 | (ppu->v.raw & 0x0FFF));
+            break;
+        }
         case 3:
         {
+            PpuNametableRead(ppu, 0x2000 | (ppu->v.raw & 0x0FFF));
             ppu->fifo[sprite_num].attribs = curr_sprite->attribs;
             ppu->fifo[sprite_num].x = curr_sprite->x;
             break;
@@ -811,10 +833,38 @@ void PpuUpdateRenderingState(Ppu *ppu)
     ppu->rendering = ppu->mask.bg_rendering | ppu->mask.sprites_rendering;
 }
 
+static void PpuCycleUpdate(Ppu *ppu)
+{
+    ppu->cycle_counter = (ppu->cycle_counter + 1) % 341;
+
+    if (!ppu->cycle_counter)
+    {
+        // 1 scanline = 341 PPU cycles
+        ppu->scanline = (ppu->scanline + 1) % 262;
+    }
+
+    if (!ppu->cycle_counter && !ppu->scanline)
+    {
+        ppu->frame_finished = true;
+        // Clear io bus at the end of each frame
+        // (Actually random on real hardware and can be up to a 30 frame delay)
+        ppu->io_bus = 0;
+        ++ppu->frames;
+    }
+}
+
 void PPU_Tick(Ppu *ppu)
 {
     if (ppu->scanline < 240 || ppu->scanline == 261)
     {
+        if (ppu->skipped_cycle)
+        {
+            PpuCycleUpdate(ppu);
+            const uint16_t bank = ppu->ctrl.bg_pat_table_addr ? 0x1000 : 0;
+            PpuUpdateBus(ppu, bank + (ppu->tile_id << 4) + ppu->v.scrolling.fine_y);
+            ppu->skipped_cycle = false;
+        }
+
         if (ppu->cycle_counter && (ppu->cycle_counter <= 257 || (ppu->cycle_counter >= 321 && ppu->cycle_counter <= 336)))
             PpuRender(ppu, ppu->scanline);
 
@@ -861,6 +911,15 @@ void PPU_Tick(Ppu *ppu)
                 ppu->oam1_addr = 0;
                 PpuFetchSprite(ppu, (ppu->cycle_counter - 257) >> 3);
             }
+
+            if (ppu->cycle_counter == 337 || ppu->cycle_counter == 339)
+            {
+                uint8_t nt_fetch = PpuNametableRead(ppu, 0x2000 | (ppu->v.raw & 0x0FFF));
+                if (ppu->cycle_counter == 337)
+                    ppu->tile_id = nt_fetch;
+                if (ppu->cycle_counter == 339 && ppu->frames & 1 && ppu->scanline == 261)
+                    ppu->skipped_cycle = true;
+            }
         }
     }
 
@@ -882,23 +941,6 @@ void PPU_Tick(Ppu *ppu)
         ppu->status.sprite_overflow = 0;
     }
 
-    ppu->cycle_counter = (ppu->cycle_counter + 1) % 341;
-
-    if (!ppu->cycle_counter)
-    {
-        // 1 scanline = 341 PPU cycles
-        ppu->scanline = (ppu->scanline + 1) % 262;
-    }
-
-    if (!ppu->cycle_counter && !ppu->scanline)
-    {
-        ppu->frame_finished = true;
-        // Clear io bus at the end of each frame
-        // (Actually random on real hardware and can be up to a 30 frame delay)
-        ppu->io_bus = 0;
-        ++ppu->frames;
-    }
-
     // Seems like the vblank flag side effect from reading PpuStatus is delayed by one dot/cycle
     if (ppu->clear_vblank)
     {
@@ -917,10 +959,15 @@ void PPU_Tick(Ppu *ppu)
             PpuClockMMC3();
     }
 
-    if (ppu->mask.bg_rendering && ppu->cycle_counter == 339 && ppu->scanline == 261 && ppu->frames & 1)
+    if (ppu->copy_t)
     {
-        ++ppu->cycle_counter;
+        if (!(ppu->copy_t_delay--))
+        {
+            PpuCopyTtoV(ppu);
+        }
     }
+
+    PpuCycleUpdate(ppu);
 }
 
 void PPU_Reset(Ppu *ppu)

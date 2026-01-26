@@ -36,10 +36,11 @@ int SystemLoadCart(Arena *arena, System *system, const char *path)
     return CartLoad(arena, system->cart, path);
 }
 
-void SystemInit(System *system, bool ppu_warmup, bool swap_duty_cycles, uint32_t **buffers, const uint32_t buffer_size)
+void SystemInit(System *system, Arena *arena, bool ppu_warmup, bool swap_duty_cycles,
+                int sample_rate, uint32_t **buffers, const uint32_t buffer_size)
 {
-    PPU_Init(system->ppu, system->cart->mirroring, ppu_warmup, buffers, buffer_size);
-    APU_Init(system->apu, swap_duty_cycles);
+    PPU_Init(system->ppu, system->cart->arrangement, ppu_warmup, buffers, buffer_size);
+    APU_Init(system->apu, arena, swap_duty_cycles, sample_rate);
     CPU_Init(system->cpu);
 }
 
@@ -78,13 +79,13 @@ static bool ExplicitAbortDmcDma(System *system)
     return !system->apu->status.dmc;
 }
 
-static void SystemStartOamDma(System *system, const uint8_t page_num, const uint16_t addr)
+static void SystemStartOamDma(System *system, const uint8_t page_num)
 {
     system->oam_dma_triggered = false;
     uint16_t base_addr = (page_num * 0x100);
     // Add cpu halt cycle
     SystemTick();
-    BusRead(addr);
+    BusRead(system->cpu_addr);
 
     bool single_dma_cycle = false;
     system->oam_dma_bytes_remaining = 256;
@@ -94,7 +95,7 @@ static void SystemStartOamDma(System *system, const uint8_t page_num, const uint
         if (system->cpu->cycles & 1)
         {
             SystemTick();
-            BusRead(addr);
+            BusRead(system->cpu_addr);
         }
 
         SystemTick();
@@ -121,13 +122,13 @@ static void SystemStartOamDma(System *system, const uint8_t page_num, const uint
     {
         // DMC DMA dummy cycle
         SystemTick();
-        BusRead(addr);
+        BusRead(system->cpu_addr);
 
         // DMC Dma Alignment cycle if needed
         if (system->cpu->cycles & 1)
         {
             SystemTick();
-            BusRead(addr);
+            BusRead(system->cpu_addr);
         }
 
         SystemTick();
@@ -142,11 +143,11 @@ static void SystemStartOamDma(System *system, const uint8_t page_num, const uint
     }
 }
 
-static void SystemStartDmcDma(System *system, const uint16_t addr)
+static void SystemStartDmcDma(System *system)
 {
     // Add cpu halt cycle
     SystemTick();
-    BusRead(addr);
+    BusRead(system->cpu_addr);
 
     if (ExplicitAbortDmcDma(system))
     {
@@ -156,13 +157,13 @@ static void SystemStartDmcDma(System *system, const uint16_t addr)
 
     // Add cpu dummy cycle
     SystemTick();
-    BusRead(addr);
+    BusRead(system->cpu_addr);
 
     // Alignment cycle if needed
     if (system->cpu->cycles & 1)
     {
         SystemTick();
-        BusRead(addr);
+        BusRead(system->cpu_addr);
     }
 
     SystemTick();
@@ -206,28 +207,6 @@ static void SystemMemMappedWrite(System *system, MemOperation op, const uint16_t
     }
 }
 
-void SystemAddMemMap(const uint16_t start_addr, const uint16_t end_addr, MemOperation op, MemPermissions perms)
-{
-    System *system = system_ptr;
-    MemMap *mem_map = NULL;
-
-    if (perms != MEM_PERM_WRITE)
-    {
-        mem_map = &system->mem_map_r[system->mem_maps_r++];
-        mem_map->start_addr = start_addr;
-        mem_map->end_addr = end_addr;
-        mem_map->op = op;
-    }
-
-    if (perms != MEM_PERM_READ)
-    {
-        mem_map = &system->mem_map_w[system->mem_maps_w++];
-        mem_map->start_addr = start_addr;
-        mem_map->end_addr = end_addr;
-        mem_map->op = op;
-    }
-}
-
 void SystemAddMemMapRead(const uint16_t start_addr, const uint16_t end_addr, MemOperation op)
 {
     System *system = system_ptr;
@@ -246,22 +225,27 @@ void SystemAddMemMapWrite(const uint16_t start_addr, const uint16_t end_addr, Me
     mem_map->op = op;
 }
 
+static void SystemHandleDMA(System *system)
+{
+    if (!system->dma_pending)
+        return;
+
+    if (system_ptr->dmc_dma_triggered && !system_ptr->oam_dma_triggered)
+    {
+        SystemStartDmcDma(system);
+    }
+    else if (system_ptr->oam_dma_triggered)
+    {
+        SystemStartOamDma(system_ptr, system_ptr->bus_data);
+    }
+
+    system_ptr->dma_pending = false;
+}
+
 uint8_t SystemRead(const uint16_t addr)
 {
     system_ptr->cpu_addr = addr;
-    if (system_ptr->dma_pending)
-    {
-        if (system_ptr->dmc_dma_triggered && !system_ptr->oam_dma_triggered)
-        {
-            SystemStartDmcDma(system_ptr, addr);
-        }
-        else if (system_ptr->oam_dma_triggered)
-        {
-            SystemStartOamDma(system_ptr, system_ptr->bus_data, addr);
-        }
-        system_ptr->dma_pending = false;
-    }
-
+    SystemHandleDMA(system_ptr);
     SystemTick();
     return BusRead(addr);
 }
@@ -319,7 +303,6 @@ uint8_t BusRead(const uint16_t addr)
                 if (addr >= mem_map->start_addr && addr <= mem_map->end_addr)
                 {
                     system_ptr->bus_data = SystemMemMappedRead(system_ptr, mem_map->op, addr);
-                    break;
                 }
             }
             break;
@@ -440,22 +423,39 @@ void PpuClockMMC3(void)
     Mmc3ClockIrqCounter(system_ptr->cart);
 }
 
-void SystemRun(System *system, SystemState state, bool debug_info)
+void PpuClockMMC5(const uint16_t addr)
 {
-    if (state == PAUSED)
+    if (system_ptr->cart->mapper_num != MAPPER_MMC5)
         return;
 
-    if (state == STEP_FRAME && system->ppu->frame_finished)
+    Mmc5ClockIrqCounter(system_ptr->cart, addr);
+}
+
+void SystemUpdateState(System *system, SystemState state)
+{
+    if (system->state == PAUSED && state == PAUSED)
+        system->state ^= PAUSED;
+    else
     {
-        system->ppu->frame_finished = false;
-        return;
+        system->state = state;
     }
+}
+
+void SystemRun(System *system, bool debug_info)
+{
+    if (system->state == PAUSED)
+        return;
 
     system->ppu->frame_finished = false;
 
     do {
         CPU_Update(system->cpu, debug_info);
-    } while (!system->ppu->frame_finished && state != STEP_INSTR);
+    } while (!system->ppu->frame_finished && system->state != STEP_INSTR);
+
+    if ((system->state == STEP_FRAME && system->ppu->frame_finished) || system->state == STEP_INSTR)
+    {
+        system->state = PAUSED;
+    }
 }
 
 bool SystemPollAllIrqs(void)
@@ -528,5 +528,6 @@ void SystemReset(System *system)
 
 void SystemShutdown(System *system)
 {
+    APU_Shutdown(system->apu);
     CartSaveSram(system->cart);
 }

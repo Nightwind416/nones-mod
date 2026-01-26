@@ -12,43 +12,15 @@
 #include "cart.h"
 #include "nones.h"
 
-#define HIGH_RATE_SAMPLES 14890
-#define LOW_RATE_SAMPLES 735
-//#define LOW_RATE_SAMPLES 800
-
 static SDL_AudioStream *stream = NULL;
 
-static void SampleTo44khz(const float *high_rate_buffer, int16_t *output_44khz_buffer)
+void NonesPutSoundData(int16_t *buffer, const int buffer_size)
 {
-    const double step = (double)(HIGH_RATE_SAMPLES) / LOW_RATE_SAMPLES;
-
-    double pos = 0.0;
-    for (int i = 0; i < LOW_RATE_SAMPLES; i++)
-    {
-        int index = (int)pos;
-        double frac = pos - index;
-
-        // Simple linear interpolation
-        float a = high_rate_buffer[index];
-        float b = (index + 1 < (HIGH_RATE_SAMPLES)) ? high_rate_buffer[index + 1] : a;
-
-        float sample = (float)((1.0 - frac) * a + frac * b);
-        // convert to s16
-        output_44khz_buffer[i] = (int16_t)(sample * 32767);
-
-        pos += step;
-    }
-}
-
-void NonesPutSoundData(Apu *apu)
-{
-    // Buffer size of 4096 samples
-    const int minimum_audio = (4096 * sizeof(int16_t));
+    // SDL buffer size is 5x the size of the sample buffer
+    const int minimum_audio = (5 * buffer_size);
     if (SDL_GetAudioStreamQueued(stream) < minimum_audio)
     {
-        SampleTo44khz(apu->buffer, apu->outbuffer);
-
-        SDL_PutAudioStreamData(stream, apu->outbuffer, sizeof(apu->outbuffer));
+        SDL_PutAudioStreamData(stream, buffer, buffer_size);
     }
 }
 
@@ -87,6 +59,39 @@ static void NonesSetIntegerScale(Nones *nones, int scale)
     SDL_SetWindowPosition(nones->window,  SDL_WINDOWPOS_CENTERED,  SDL_WINDOWPOS_CENTERED);
 }
 
+static const int joystick_button_table[2][4] =
+{
+    { 2,  3,  4,  5  },
+    { 10, 11, 12, 13 }
+};
+
+static void NonesUpdateJoyStick(Nones *nones, SDL_Joystick *joystick, bool player2)
+{
+    const int16_t axis_x = SDL_GetJoystickAxis(joystick, SDL_GAMEPAD_AXIS_LEFTX);
+    const int16_t axis_y = SDL_GetJoystickAxis(joystick, SDL_GAMEPAD_AXIS_LEFTY);
+
+    if (axis_x || axis_y)
+    {
+        if (axis_y <= -16000)
+        {
+            nones->buttons[joystick_button_table[player2][0]] = true;
+        }
+        else if (axis_y >= 16000)
+        {
+            nones->buttons[joystick_button_table[player2][1]] = true;
+        }
+    
+        if (axis_x <= -16000)
+        {
+            nones->buttons[joystick_button_table[player2][2]] = true;
+        }
+        else if (axis_x >= 16000)
+        {
+            nones->buttons[joystick_button_table[player2][3]] = true;
+        }
+    }
+}
+
 static void NonesHandleInput(Nones *nones)
 {
     const bool *kb_state  = SDL_GetKeyboardState(NULL);
@@ -110,6 +115,8 @@ static void NonesHandleInput(Nones *nones)
         nones->buttons[5] |= SDL_GetGamepadButton(nones->gamepad1, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
         nones->buttons[6] |= SDL_GetGamepadButton(nones->gamepad1, SDL_GAMEPAD_BUTTON_START);
         nones->buttons[7] |= SDL_GetGamepadButton(nones->gamepad1, SDL_GAMEPAD_BUTTON_BACK);
+
+        NonesUpdateJoyStick(nones, nones->joystick1, false);
     }
 
     if (nones->gamepad2)
@@ -122,6 +129,8 @@ static void NonesHandleInput(Nones *nones)
         nones->buttons[13] = SDL_GetGamepadButton(nones->gamepad2, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
         nones->buttons[14] = SDL_GetGamepadButton(nones->gamepad2, SDL_GAMEPAD_BUTTON_START);
         nones->buttons[15] = SDL_GetGamepadButton(nones->gamepad2, SDL_GAMEPAD_BUTTON_BACK);
+
+        NonesUpdateJoyStick(nones, nones->joystick2, true);
     }
 
     SystemUpdateJPButtons(nones->system, nones->buttons);
@@ -141,7 +150,7 @@ static void NonesHandleInput(Nones *nones)
         NonesSetIntegerScale(nones, 5);
 }
 
-static void NonesInit(Nones *nones, const char *path, const char *audio_driver)
+static void NonesInit(Nones *nones, const char *path, const char *audio_driver, const int sample_rate)
 {
     memset(nones, 0, sizeof(*nones));
     nones->arena = ArenaCreate(1024 * 1024 * 3);
@@ -193,6 +202,7 @@ static void NonesInit(Nones *nones, const char *path, const char *audio_driver)
     if (nones->gamepads)
     {
         nones->gamepad1 = SDL_OpenGamepad(nones->gamepads[0]);
+        nones->joystick1 = SDL_GetGamepadJoystick(nones->gamepad1);
         char *gamepad1_info = SDL_GetGamepadMapping(nones->gamepad1);
         printf("Gamepad1: %s\n", gamepad1_info);
         SDL_free(gamepad1_info);
@@ -200,6 +210,7 @@ static void NonesInit(Nones *nones, const char *path, const char *audio_driver)
         if (nones->num_gamepads > 1)
         {
             nones->gamepad2 = SDL_OpenGamepad(nones->gamepads[1]);
+            nones->joystick2 = SDL_GetGamepadJoystick(nones->gamepad2);
             char *gamepad2_info = SDL_GetGamepadMapping(nones->gamepad2);
             printf("Gamepad2: %s\n", gamepad2_info);
             SDL_free(gamepad2_info);
@@ -213,7 +224,7 @@ static void NonesInit(Nones *nones, const char *path, const char *audio_driver)
     SDL_AudioSpec spec;
     spec.channels = 1;
     spec.format = SDL_AUDIO_S16;
-    spec.freq = 44100;
+    spec.freq = sample_rate;
 
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
     if (!stream)
@@ -263,9 +274,10 @@ static void NonesReset(Nones *nones)
     SystemReset(nones->system);
 }
 
-void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const char *path, const char *audio_driver)
+void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sample_rate,
+              const char *path, const char *audio_driver)
 {
-    NonesInit(nones, path, audio_driver);
+    NonesInit(nones, path, audio_driver, sample_rate);
 
     // Allocate pixel buffers (back and front)
     uint32_t *buffers[2];
@@ -273,7 +285,7 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const char *
     buffers[0] = ArenaPush(nones->arena, buffer_size);
     buffers[1] = ArenaPush(nones->arena, buffer_size);
 
-    SystemInit(nones->system, ppu_warmup, swap_duty_cycles, buffers, buffer_size);
+    SystemInit(nones->system,nones->arena, ppu_warmup, swap_duty_cycles, sample_rate, buffers, buffer_size);
     SDL_Event event;
     void *raw_pixels;
     int raw_pitch;
@@ -290,6 +302,8 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const char *
     uint64_t previous_time = 0;
     uint64_t current_time = 0;
     uint64_t accumulator = 0;
+
+    float accum_delta = FRAME_TIME_NS;
 
     while (!nones->quit)
     {
@@ -316,13 +330,13 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const char *
                             NonesReset(nones);
                             break;
                         case SDLK_F6:
-                            nones->state ^= PAUSED;
+                            SystemUpdateState(nones->system, PAUSED);
                             break;
                         case SDLK_F10:
-                            nones->state = STEP_FRAME;
+                            SystemUpdateState(nones->system, STEP_FRAME);
                             break;
                         case SDLK_F11:
-                            nones->state = STEP_INSTR;
+                            SystemUpdateState(nones->system, STEP_INSTR);
                             break;
                     }
                     break;
@@ -331,14 +345,11 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const char *
 
         NonesHandleInput(nones);
 
-        while (accumulator >= FRAME_TIME_NS)
+        while (accumulator >= accum_delta)
         {
-            SystemRun(nones->system, nones->state, nones->debug_info);
+            SystemRun(nones->system, nones->debug_info);
 
-            if (nones->state > PAUSED)
-                nones->state = PAUSED;
-
-            accumulator -= FRAME_TIME_NS;
+            accumulator -= accum_delta;
             ++info.updates;
         }
 

@@ -158,45 +158,46 @@ typedef union
 
 typedef struct
 {
-    float buffer[14890];
-    int16_t outbuffer[735];
-    uint64_t cycles;
+    ApuEnvelope envelope;
+    uint16_t sweep_counter;
+    uint16_t target_period;
+    uint16_t volume;
+    uint16_t output;
+    uint16_t length_counter;
+    int16_t duty_step;
+    // External
+    ApuTimer timer_period;
+    // Internal timer
+    ApuTimer timer;
+    ApuPulseReg reg;
+    ApuPulseSweepReg sweep_reg;
+    bool reload;
+    bool muting;
+    uint8_t length_counter_load : 5;
+} ApuPulse;
 
-    struct {
-        ApuPulseReg reg;
-        ApuPulseSweepReg sweep_reg;
-        // External
-        ApuTimer timer_period;
-        // Internal timer
-        ApuTimer timer;
-        ApuEnvelope envelope;
-        bool reload;
-        uint16_t sweep_counter;
-        uint16_t target_period;
-        bool muting;
-        uint16_t volume;
-        uint16_t output;
-        int duty_step;
-        uint16_t length_counter;
-        uint8_t length_counter_load : 5;
-    } pulse1;
+typedef struct
+{
+    struct
+    {
+        float *input_buffer;
+        int16_t *output_buffer;
+        float sample;
+        float sample_rate;
+        float accum;
+        float accum_delta;
+        float hpf_sample;
+        float lpf_alpha;
+        float hpf_alpha;
+        int input_index;
+        int input_len;
+        int output_len;
+        int input_size;
+        int output_size;
+    } mixer;
 
-    struct {
-        ApuPulseReg reg;
-        ApuPulseSweepReg sweep_reg;
-        ApuTimer timer_period;
-        ApuTimer timer;
-        ApuEnvelope envelope;
-        bool reload;
-        uint16_t sweep_counter;
-        uint16_t target_period;
-        bool muting;
-        uint16_t volume;
-        uint16_t output;
-        int duty_step;
-        uint16_t length_counter;
-        uint8_t length_counter_load : 5;
-    } pulse2;
+    ApuPulse pulse1;
+    ApuPulse pulse2;
 
     struct {
         ApuTriangleLinearCounter reg;
@@ -244,9 +245,8 @@ typedef struct
     ApuFrameCounter frame_counter;
     ApuStatus status;
 
-    float mixed_sample;
+    uint64_t cycles;
     int alignment;
-    int current_sample;
     bool clear_frame_irq;
     bool swap_duty_cycles;
 } Apu;
@@ -267,6 +267,10 @@ typedef struct
     // Frame interrupt flag
     bool frame_interrupt;
 } SequenceStep;
+
+#define APU_FREQ 894886.5
+#define APU_CYCLES_PER_FRAME 14890.0f
+#define LOW_PASS_CUTOFF 14000
 
 #define APU_PULSE_1_DUTY 0x4000
 #define APU_PULSE_1_SWEEP 0x4001
@@ -298,8 +302,9 @@ uint8_t ApuReadStatus(Apu *apu, const uint8_t bus_data);
 void WriteAPURegister(Apu *apu, const uint16_t addr, const uint8_t data);
 bool PollApuIrqs(Apu *apu);
 void ApuDmcDmaUpdate(Apu *apu);
-void APU_Init(Apu *apu, const bool swap_duty_cycles);
+void APU_Init(Apu *apu, Arena *arena, const bool swap_duty_cycles, int sample_rate);
 void APU_Tick(Apu *apu);
 void APU_Reset(Apu *apu);
+void APU_Shutdown(Apu *apu);
 
 #endif

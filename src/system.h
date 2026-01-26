@@ -33,6 +33,7 @@ typedef struct System
     JoyPad *joy_pad1;
     JoyPad *joy_pad2;
     uint8_t *sys_ram;
+    SystemState state;
     int mem_maps_r;
     int mem_maps_w;
     int oam_dma_bytes_remaining;
@@ -52,8 +53,10 @@ typedef struct System
 #define CPU_RAM_SIZE 0x800
 
 System *SystemCreate(Arena *arena);
-void SystemInit(System *system, bool ppu_warmup, bool swap_duty_cycles, uint32_t **buffers, const uint32_t buffer_size);
-void SystemRun(System *system, SystemState state, bool debug_info);
+void SystemInit(System *system, Arena *arena, bool ppu_warmup, bool swap_duty_cycles,
+                int sample_rate, uint32_t **buffers, const uint32_t buffer_size);
+void SystemRun(System *system, bool debug_info);
+void SystemUpdateState(System *system, SystemState state);
 void SystemAddMemMap(const uint16_t start_addr, const uint16_t end_addr, MemOperation op, MemPermissions perms);
 void SystemAddMemMapRead(const uint16_t start_addr, const uint16_t end_addr, MemOperation op);
 void SystemAddMemMapWrite(const uint16_t start_addr, const uint16_t end_addr, MemOperation op);
@@ -75,6 +78,7 @@ int SystemLoadCart(Arena *arena, System *System, const char *path);
 uint8_t PpuBusReadChrRom(const uint16_t addr);
 void PpuBusWriteChrRam(const uint16_t addr, const uint8_t data);
 void PpuClockMMC3(void);
+void PpuClockMMC5(uint16_t addr);
 
 void SystemAddCpuCycles(uint32_t cycles);
 void SystemUpdateJPButtons(System *system, const bool *buttons);

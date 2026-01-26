@@ -40,11 +40,11 @@ typedef enum
 
 typedef enum
 {
-    NAMETABLE_HORIZONTAL,
     NAMETABLE_VERTICAL,
+    NAMETABLE_HORIZONTAL,
     NAMETABLE_SINGLE_SCREEN,
     NAMETABLE_FOUR_SCREEN,
-} NameTableMirror;
+} NameTableArrangement;
 
 typedef enum
 {
@@ -254,7 +254,14 @@ typedef struct
         bool w;
     };
 
-    NameTableMirror mirroring;
+    struct
+    {
+        uint8_t timer;
+        bool oam2_overflow;
+        bool done;
+    } sprite_eval;
+
+    NameTableArrangement arrangement;
     int ext_input;
 
     ShiftReg bg_shift_low;
@@ -262,6 +269,7 @@ typedef struct
     ShiftReg attrib_shift_low;
     ShiftReg attrib_shift_high;
 
+    uint16_t copy_t_delay;
     uint16_t delayed_vram_inc;
     uint16_t sprite_addr;
     uint16_t bg_addr;
@@ -273,10 +281,12 @@ typedef struct
     bool sprite0_loaded;
     bool prev_sprite0_loaded;
     bool sprite_in_range;
-    
+
     bool rendering;
     bool clear_vblank;
     bool frame_finished;
+    bool skipped_cycle;
+    bool copy_t;
 
     // External io regs for cpu
     PpuCtrl ctrl;
@@ -284,9 +294,6 @@ typedef struct
     PpuStatus status;
     uint8_t oam1_addr;
     uint8_t oam2_addr;
-    bool oam2_addr_overflow;
-    bool sprite_eval_done;
-    uint8_t sprite_timer;
     uint8_t oam_buffer;
     // Read buffer for $2007
     uint8_t buffered_data;
@@ -301,12 +308,13 @@ typedef struct
     uint8_t io_bus;
 } Ppu;
 
-void PPU_Init(Ppu *ppu, int mirroring, bool warmup, uint32_t **buffers, uint32_t buffer_size);
+void PPU_Init(Ppu *ppu, int arrangement, bool warmup, uint32_t **buffers, uint32_t buffer_size);
 void PPU_Tick(Ppu *ppu);
 void PPU_Reset(Ppu *ppu);
 void PpuUpdateRenderingState(Ppu *ppu);
 uint8_t ReadPPURegister(Ppu *ppu, const uint16_t addr);
 void WritePPURegister(Ppu *ppu, const uint16_t addr, const uint8_t data);
-void PpuSetMirroring(NameTableMirror mode, int page);
+void PpuSetArrangement(NameTableArrangement mode, int page);
+void PpuSetNameTable(int nt, int mode);
 
 #endif
