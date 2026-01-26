@@ -26,7 +26,7 @@ typedef union
     struct
     {
         // Shift count (number of bits).
-        // If SSS is 0, then behaves like E=0. 
+        // If SSS is 0, then behaves like E=0.
         uint8_t shift_count : 3;
         // Negate flag:
         // 0: add to period, sweeping toward lower frequencies;
@@ -34,7 +34,7 @@ typedef union
         uint8_t negate : 1;
         // The divider's period is P + 1 half-frames
         uint8_t devider_period : 3;
-        // Enabled flag 
+        // Enabled flag
         uint8_t enabled : 1;
     };
 } ApuPulseSweepReg;
@@ -92,7 +92,7 @@ typedef union
 // The sequencer is clocked on every other CPU cycle, so 2 CPU cycles = 1 APU cycle.
 // The sequencer keeps track of how many APU cycles have elapsed in total, and each step of the sequence will
 // occur once that total has reached the indicated amount (with an additional delay of one CPU cycle for the quarter and half frame signals).
-// Once the last step has executed, the count resets to 0 on the next APU cycle. 
+// Once the last step has executed, the count resets to 0 on the next APU cycle.
 typedef struct
 {
     ApuFrameCounterControl control;
@@ -119,7 +119,7 @@ typedef union
     };
 } ApuNoiseReg;
 
-typedef union 
+typedef union
 {
     uint16_t raw : 15;
     struct
@@ -257,7 +257,7 @@ typedef struct
     bool frame;
 } Apu;
 
-typedef enum 
+typedef enum
 {
     SEQ_CLOCK_NONE,
     // Envelopes & triangle's linear counter
@@ -270,7 +270,7 @@ typedef struct
 {
     int cycles;
     SequencerClockEvent event;
-    // Frame interrupt flag 
+    // Frame interrupt flag
     bool frame_interrupt;
 } SequenceStep;
 
