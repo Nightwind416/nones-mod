@@ -451,7 +451,7 @@ int nones_load_rom(const char* path) {
         // Allocate two frame buffers if not already done
         if (!buffers[0]) buffers[0] = malloc(buffer_size);
         if (!buffers[1]) buffers[1] = malloc(buffer_size);
-        SystemInit(g_nones.system, buffers);
+        SystemInit(g_nones.system, buffers, buffer_size);
     }
     return result;
 }
