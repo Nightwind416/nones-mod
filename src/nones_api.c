@@ -126,7 +126,7 @@ static int realtime_emulation_thread(void *data) {
             if (!atomic_load(&g_paused)) {
                 nones_advance_frame();
                 if (g_nones.system && g_nones.system->apu) {
-                    write_audio_samples(g_nones.system->apu->outbuffer, 735);
+                    write_audio_samples(g_nones.system->apu->mixer.output_buffer, 735);
                 }
                 atomic_store(&g_new_frame_available, true);
                 g_frame_counter++;
@@ -204,8 +204,10 @@ void nones_stop_realtime() {
 void nones_pause() {
     if (!g_realtime_thread) return; // Not running
     atomic_store(&g_paused, true);
-    // Also reflect pause in underlying Nones struct state the same way the standalone F6 toggle does
-    g_nones.state = PAUSED;
+    // Also reflect pause in underlying System state the same way the standalone F6 toggle does
+    if (g_nones.system) {
+        SystemUpdateState(g_nones.system, PAUSED);
+    }
 }
 
 // Resume from soft pause, resetting timing accumulator subtly so we don't burst
@@ -215,7 +217,9 @@ void nones_resume() {
     atomic_store(&g_reset_timing, true);
     atomic_store(&g_paused, false);
     // Restore to RUNNING (continuous) state just like normal emulator loop
-    g_nones.state = RUNNING;
+    if (g_nones.system) {
+        SystemUpdateState(g_nones.system, RUNNING);
+    }
 }
 
 // Advance the emulator by one frame (for DLL/headless use)
@@ -261,10 +265,9 @@ void nones_advance_frame() {
     // Track cycles at start of frame
     uint64_t start_cycles = g_nones.system->cpu->cycles;
 
-    // Run one frame of emulation using the regular RUNNING state semantics so that
-    // pause behavior matches the standalone F6 implementation (PAUSED short‑circuits in SystemRun).
-    // We intentionally use RUNNING instead of STEP_FRAME so we do not implicitly force a PAUSED state afterwards.
-    SystemRun(g_nones.system, RUNNING, false);
+    // Run one frame of emulation
+    // State is managed separately via SystemUpdateState; SystemRun just executes
+    SystemRun(g_nones.system, false);
 
     // Calculate cycles executed this frame
     uint64_t executed_cycles = g_nones.system->cpu->cycles - start_cycles;
@@ -451,7 +454,8 @@ int nones_load_rom(const char* path) {
         // Allocate two frame buffers if not already done
         if (!buffers[0]) buffers[0] = malloc(buffer_size);
         if (!buffers[1]) buffers[1] = malloc(buffer_size);
-        SystemInit(g_nones.system, buffers, buffer_size);
+        // Initialize system with arena, no PPU warmup, no duty cycle swap, 44.1kHz audio
+        SystemInit(g_nones.system, g_nones.arena, false, false, 44100, buffers, buffer_size);
     }
     return result;
 }
