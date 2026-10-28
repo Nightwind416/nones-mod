@@ -413,7 +413,7 @@ int nones_init() {
         return 3;
     }
 
-    g_nones.arena = ArenaCreate(1024 * 1024 * 3);
+    g_nones.arena = ArenaCreate(1024 * 1024 * 5);
     if (!g_nones.arena) return 1;
 
     g_nones.system = SystemCreate(g_nones.arena);
@@ -480,7 +480,7 @@ int nones_save_sram() {
     if (!save_path[0]) return 2;
     FILE *sav = fopen(save_path, "wb");
     if (!sav) return 3;
-    fwrite(g_nones.system->cart->ram, CART_RAM_SIZE, 1, sav);
+    fwrite(g_nones.system->cart->prg_ram.data, CART_RAM_SIZE, 1, sav);
     fclose(sav);
     return 0;
 }

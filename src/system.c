@@ -19,13 +19,12 @@ static System *system_ptr = NULL;
 System *SystemCreate(Arena *arena)
 {
     System *system = ArenaPush(arena, sizeof(System));
+    system->cart = ArenaPush(arena, sizeof(Cart));
     system->cpu = ArenaPush(arena, sizeof(Cpu));
     system->apu = ArenaPush(arena, sizeof(Apu));
     system->ppu = ArenaPush(arena, sizeof(Ppu));
-    system->cart = ArenaPush(arena, sizeof(Cart));
     system->joy_pad1 = ArenaPush(arena, sizeof(JoyPad));
     system->joy_pad2 = ArenaPush(arena, sizeof(JoyPad));
-    system->sys_ram = ArenaPush(arena, CPU_RAM_SIZE);
 
     system_ptr = system;
     return system;
@@ -47,26 +46,6 @@ void SystemInit(System *system, Arena *arena, bool ppu_warmup, bool swap_duty_cy
 uint8_t SystemReadOpenBus(void)
 {
     return system_ptr->bus_data;
-}
-
-static void SystemRamWrite(System *system, const uint16_t addr, const uint8_t data)
-{
-    system->sys_ram[addr & 0x7FF] = data;
-}
-
-static uint8_t SystemRamRead(System *system, const uint16_t addr)
-{
-    return system->sys_ram[addr & 0x7FF];
-}
-
-static void SWramWrite(System *system, const uint16_t addr, const uint8_t data)
-{
-    system->cart->ram[addr & 0x1FFF] = data;
-}
-
-static uint8_t SWramRead(System *system, const uint16_t addr)
-{
-    return system->cart->ram[addr & 0x1FFF];
 }
 
 static bool ApuRegsActivated(System *system)
@@ -177,54 +156,6 @@ void SystemSignalDmcDma(void)
     system_ptr->dmc_dma_triggered = true;
 }
 
-static uint8_t SystemMemMappedRead(System *system, MemOperation op, const uint16_t addr)
-{
-    switch (op)
-    {
-        case MEM_PRG_READ:
-            return MapperReadPrgRom(system->cart, addr);
-        case MEM_REG_READ:
-            return MapperReadReg(system->cart, addr);
-        case MEM_SWRAM_READ:
-            return SWramRead(system, addr);
-        default:
-            return 0;
-    }
-}
-
-static void SystemMemMappedWrite(System *system, MemOperation op, const uint16_t addr, uint8_t data)
-{
-    switch (op)
-    {
-        case MEM_SWRAM_WRITE:
-            SWramWrite(system, addr, data);
-            break;
-        case MEM_REG_WRITE:
-            MapperWriteReg(system->cart, addr, data);
-            break;
-        default:
-            break;
-    }
-}
-
-void SystemAddMemMapRead(const uint16_t start_addr, const uint16_t end_addr, MemOperation op)
-{
-    System *system = system_ptr;
-    MemMap *mem_map = &system->mem_map_r[system->mem_maps_r++];
-    mem_map->start_addr = start_addr;
-    mem_map->end_addr = end_addr;
-    mem_map->op = op;
-}
-
-void SystemAddMemMapWrite(const uint16_t start_addr, const uint16_t end_addr, MemOperation op)
-{
-    System *system = system_ptr;
-    MemMap *mem_map = &system->mem_map_w[system->mem_maps_w++];
-    mem_map->start_addr = start_addr;
-    mem_map->end_addr = end_addr;
-    mem_map->op = op;
-}
-
 static void SystemHandleDMA(System *system)
 {
     if (!system->dma_pending)
@@ -252,65 +183,41 @@ uint8_t SystemRead(const uint16_t addr)
 
 uint8_t BusRead(const uint16_t addr)
 {
-    ++system_ptr->cpu->cycles;
-    // Extract A15, A14, and A13
-    uint8_t region = (addr >> 13) & 0x7;
+    System *system = system_ptr;
+    ++system->cpu->cycles;
 
-    if (ApuRegsActivated(system_ptr))
+    if (ApuRegsActivated(system))
     {
         uint8_t val = addr & 0x1F;
         if (val == 0x15)
         {
-            return ApuReadStatus(system_ptr->apu, system_ptr->bus_data);
+            return ApuReadStatus(system->apu, system->bus_data);
         }
         else if (val == 0x16)
         {
             // Clear bits 0–4
-            system_ptr->bus_data &= 0xE0;
+            system->bus_data &= 0xE0;
             // Update bits 0–4
-            system_ptr->bus_data |= (ReadJoyPadReg(system_ptr->joy_pad1) & 0x1F);
+            system->bus_data |= (ReadJoyPadReg(system->joy_pad1) & 0x1F);
+            return system->bus_data;
         }
         else if (val == 0x17)
         {
             // Clear bits 0–4
-            system_ptr->bus_data &= 0xE0;
+            system->bus_data &= 0xE0;
             // Update bits 0–4
-            system_ptr->bus_data |= (ReadJoyPadReg(system_ptr->joy_pad2) & 0x1F);
+            system->bus_data |= (ReadJoyPadReg(system->joy_pad2) & 0x1F);
+            return system->bus_data;
         }
-        else if (addr >= 0x4000 && addr < 0x6000)
-        {
-            DEBUG_LOG("Open bus read! addr: 0x%04X bus: %X\n", addr, system_ptr->bus_data);
-        }
+        //else if (addr >= 0x4000 && addr < 0x6000)
+        //{
+        //    DEBUG_LOG("Open bus read! addr: 0x%04X bus: %X\n", addr, system->bus_data);
+        //}
     }
 
-    switch (region)
-    {
-        // $0000 - $1FFF
-        case 0x0:
-            system_ptr->bus_data = SystemRamRead(system_ptr, addr);
-            break;
-
-        // $2000 - $3FFF
-        case 0x1:
-            system_ptr->bus_data = ReadPPURegister(system_ptr->ppu, addr);
-            break;
-        default:
-        {
-            for (int i = 0; i < system_ptr->mem_maps_r; i++)
-            {
-                MemMap *mem_map = &system_ptr->mem_map_r[i];
-            
-                if (addr >= mem_map->start_addr && addr <= mem_map->end_addr)
-                {
-                    system_ptr->bus_data = SystemMemMappedRead(system_ptr, mem_map->op, addr);
-                }
-            }
-            break;
-        }
-    }
-
+    system->bus_data = system->cart->MemMapReadFn[addr](system->cart, addr);
     // Finally read the data from the bus
-    return system_ptr->bus_data;
+    return system->bus_data;
 }
 
 void SystemWrite(const uint16_t addr, const uint8_t data)
@@ -322,56 +229,16 @@ void SystemWrite(const uint16_t addr, const uint8_t data)
 
 void BusWrite(const uint16_t addr, const uint8_t data)
 {
-    ++system_ptr->cpu->cycles;
-    // Extract A15, A14, and A13
-    uint8_t region = (addr >> 13) & 0x7;
+    System *system = system_ptr;
+    ++system->cpu->cycles;
 
-    switch (region)
-    {
-        // $0000 - $1FFF
-        case 0x0:
-            // Internal RAM (mirrored)
-            SystemRamWrite(system_ptr, addr, data);
-            break;
+    system->cart->MemMapWriteFn[addr](system->cart, addr, data);
+    system->bus_data = data;
+}
 
-        // $2000 - $3FFF
-        case 0x1:
-            WritePPURegister(system_ptr->ppu, addr, data);
-            break;
-
-        // $4000 - $5FFF
-        case 0x2:
-        {
-            if (addr == 0x4014)
-            {
-                DEBUG_LOG("Requested OAM DMA 0x%04X\n", addr);
-                system_ptr->oam_dma_triggered = true;
-                system_ptr->dma_pending = true;
-            }
-            else if (addr == 0x4016)
-            {
-                WriteJoyPadReg(system_ptr->joy_pad1, data);
-                WriteJoyPadReg(system_ptr->joy_pad2, data);
-            }
-            else if (addr < 0x4018)
-            {
-                WriteAPURegister(system_ptr->apu, addr, data);
-            }
-            break;
-        }
-    }
-
-    for (int i = 0; i < system_ptr->mem_maps_w; i++)
-    {
-        MemMap *mem_map = &system_ptr->mem_map_w[i];
-
-        if (addr >= mem_map->start_addr && addr <= mem_map->end_addr)
-        {
-            SystemMemMappedWrite(system_ptr, mem_map->op, addr, data);
-        }
-    }
-
-    system_ptr->bus_data = data;
+System *SystemGetPtr(void)
+{
+    return system_ptr;
 }
 
 Cart *SystemGetCart(void)
@@ -415,6 +282,30 @@ void PpuBusWriteChrRam(const uint16_t addr, const uint8_t data)
     MapperWriteChrRam(cart, addr, data);
 }
 
+void MapperClockAudioTimers(void)
+{
+    if (system_ptr->cart->mapper_num == MAPPER_MMC5)
+    {
+        Mmc5ClockAudioTimers();
+    }
+}
+
+void MapperClockAudio(void)
+{
+    if (system_ptr->cart->mapper_num == MAPPER_MMC5)
+    {
+        Mmc5ClockAudio();
+    }
+}
+
+float MapperGetMixedAudio(void)
+{
+    if (system_ptr->cart->mapper_num != MAPPER_MMC5)
+        return 0;
+
+    return Mmc5GetMixedAudio();
+}
+
 void PpuClockMMC3(void)
 {
     if (system_ptr->cart->mapper_num != MAPPER_MMC3)
@@ -423,12 +314,12 @@ void PpuClockMMC3(void)
     Mmc3ClockIrqCounter(system_ptr->cart);
 }
 
-uint8_t ExtNameTableRead(Ppu *ppu, const uint16_t addr, const bool tile_fetch)
+uint8_t ExtNameTableRead(Ppu *ppu, const uint16_t addr)
 {
     if (system_ptr->cart->mapper_num != MAPPER_MMC5)
         return PpuNametableRead(ppu, addr);
 
-    return Mmc5ReadNameTable(ppu, addr, tile_fetch);
+    return Mmc5ReadNameTable(ppu, addr);
 }
 
 void SystemUpdateState(System *system, SystemState state)
@@ -449,7 +340,7 @@ void SystemRun(System *system, bool debug_info)
     system->ppu->frame_finished = false;
 
     do {
-        CPU_Update(system->cpu, debug_info);
+        CPU_ExecuteInstr(system->cpu, debug_info);
     } while (!system->ppu->frame_finished && system->state != STEP_INSTR);
 
     if ((system->state == STEP_FRAME && system->ppu->frame_finished) || system->state == STEP_INSTR)
@@ -464,20 +355,16 @@ bool SystemPollAllIrqs(void)
 }
 
 // The PPU pulls /NMI low if and only if both vblank_flag and NMI_output are true.
-static uint8_t SystemReadNmiPin(System *system)
+// However we can get the same results by doing the opposite.
+static inline uint8_t SystemReadNmiPin(System *system)
 {
-    return ~(system->ppu->ctrl.vblank_nmi & system->ppu->status.vblank);
+    return (system->ppu->ctrl.vblank_nmi & system->ppu->status.vblank);
 }
 
 static void SystemPollNmi(System *system)
 {
-    uint8_t current_nmi_pin = SystemReadNmiPin(system);
-    if (~current_nmi_pin & system->cpu->nmi_pin)
-    {
-        system->cpu->nmi_pending = true;
-        //printf("NMI falling edge at frame: %ld ppu cycle: %d scanline:%d\n",
-        //        system_ptr->ppu->frames, system_ptr->ppu->cycle_counter, system_ptr->ppu->scanline);
-    }
+    const uint8_t current_nmi_pin = SystemReadNmiPin(system);
+    system->cpu->nmi_pending |= (current_nmi_pin & ~system->cpu->nmi_pin);
     system->cpu->nmi_pin = current_nmi_pin;
 }
 
@@ -489,6 +376,7 @@ void SystemTick(void)
     SystemPollNmi(system_ptr);
     PPU_Tick(system_ptr->ppu);
     PPU_Tick(system_ptr->ppu);
+    PpuScheduleRendererUpdate(system_ptr->ppu);
 }
 
 void SystemAddCpuCycles(uint32_t cycles)

@@ -64,6 +64,10 @@ typedef union
 
 typedef struct 
 {
+    // Pre-Computed Chr bank info
+    uint16_t chr_bank_size;
+    uint16_t chr_bank_mask;
+
     uint16_t shift_count;
     Mmc1ShiftReg shift;
     Mmc1LoadReg load;
@@ -234,25 +238,47 @@ typedef union
     {
         uint8_t : 6;
         uint8_t in_frame : 1;
-        uint8_t irq_pending : 1;
+        uint8_t pending : 1;
     };
 
 } Mmc5IrqStatusReg;
 
+typedef union
+{
+    uint8_t raw;
+    struct
+    {
+        uint8_t mode : 1;
+        uint8_t : 6;
+        uint8_t enable : 1;
+    };
+} Mmc5PcmIrqMode;
+
+typedef struct
+{
+    ApuPulse pulse1;
+    ApuPulse pulse2;
+    int timer;
+    ApuStatus status;
+    uint8_t pcm_data;
+} Mmc5Audio;
+
 typedef struct
 {
     uint8_t ext_ram[0x400];
+    Mmc5Audio audio;
     uint8_t chr_bank[12];
     Mmc5PrgBankReg prg_bank[5];
     Mmc5PrgRamReg prg_ram[3];
+    uint8_t multiplier[2];
     uint16_t prev_addr;
     Mmc5NtReg mapping;
     Mmc5IrqStatusReg irq_status;
+    Mmc5PcmIrqMode pcm_irq;
     uint8_t target_scanline;
     uint8_t scanline;
     uint8_t matches;
     uint8_t fillmode_tile;
-    bool ppu_reading;
     uint8_t fillmode_color : 2;
     uint8_t ext_ram_mode : 2;
     // 1,2,3: Substitutions enabled; 0: substitutions disabled
@@ -263,6 +289,8 @@ typedef struct
     // 2 - One 16KB bank ($8000-$BFFF) and two 8KB banks ($C000-$DFFF and $E000-$FFFF);
     // 3 - Four 8KB banks;
     uint8_t prg_mode : 2;
+    uint8_t prg_ram_protect1 : 2;
+    uint8_t prg_ram_protect2 : 2;
     // CHR mode
     // 0 - 8KB CHR pages
     // 1 - 4KB CHR pages
@@ -272,6 +300,7 @@ typedef struct
     uint8_t chr_high : 2;
     uint8_t sprite_mode : 1;
     uint8_t irq_enable : 1;
+    uint8_t irq_trip : 1;
 } Mmc5;
 
 typedef struct
@@ -408,42 +437,20 @@ typedef enum
     MAPPER_MMC2 = 9,
     MAPPER_COLORDREAMS = 11,
     MAPPER_BNROM_NINA = 34,
+    MAPPER_SUNSOFT4 = 68,
+    MAPPER_SUNSOFT5 = 69,
     MAPPER_CAMERICA = 71,
     MAPPER_NANJING = 163
 } MapperType;
 
-typedef enum
-{
-    MEM_PERM_READ,
-    MEM_PERM_WRITE,
-    MEM_PERM_READ_WRITE,
-} MemPermissions;
-
-typedef enum
-{
-    MEM_PRG_READ,
-    MEM_REG_READ,
-    MEM_SWRAM_READ, 
-    MEM_REG_WRITE,
-    MEM_SWRAM_WRITE
-} MemOperation;
-
-typedef struct
-{
-    uint32_t start_addr;
-    uint32_t end_addr;
-    MemPermissions perms;
-    MemOperation op;
-} MemMap;
-
-uint8_t MapperReadPrgRom(Cart *cart, const uint16_t addr);
 uint8_t MapperReadChrRom(Cart *cart, const uint16_t addr);
-uint8_t MapperReadReg(Cart *cart, const uint16_t addr);
 void MapperWriteChrRam(Cart *cart, const uint16_t addr, const uint8_t data);
-void MapperWriteReg(Cart *cart, const uint16_t addr, uint8_t data);
 
 void Mmc3ClockIrqCounter(Cart *cart);
-uint8_t Mmc5ReadNameTable(Ppu *ppu, const uint16_t addr, const bool tile_fetch);
+void Mmc5ClockAudio(void);
+void Mmc5ClockAudioTimers(void);
+float Mmc5GetMixedAudio(void);
+uint8_t Mmc5ReadNameTable(Ppu *ppu, const uint16_t addr);
 bool PollMapperIrq(void);
 void MapperReset(Cart *cart);
 void MapperInit(Cart *cart);

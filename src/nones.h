@@ -4,6 +4,7 @@
 //#define SCREEN_WIDTH 340
 //#define SCREEN_HEIGHT 260
 #define SCREEN_WIDTH 256
+#define SCREEN_WIDTH_EDGE 37
 #define SCREEN_HEIGHT 240
 #define FRAMERATE 60
 #define FRAMECAP 500
@@ -17,9 +18,7 @@ typedef struct
 {
     char cpu_msg[128];
     char fps_msg[8];
-    char ups_msg[8];
     uint64_t frames;
-    uint64_t updates;
     uint64_t timer;
 } NonesInfo;
 
@@ -36,11 +35,14 @@ typedef struct {
     SDL_Joystick *joystick1;
     SDL_Joystick *joystick2;
     int num_gamepads;
+    int aspect_ratio;
     bool debug_info;
+    bool fullscreen;
     bool quit;
 } Nones;
 
-void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sample_rate, const char *path, const char *audio_driver);
+void NonesRun(Nones *nones, bool ppu_warmup, bool fullscreen, const int aspect_ratio, bool swap_duty_cycles,
+              const int sample_rate, const char *path, const char *audio_driver);
 void NonesPutSoundData(int16_t *buffer, const int buffer_size);
 
 #endif
