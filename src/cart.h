@@ -21,7 +21,7 @@ typedef struct
     uint8_t prg_rom_size_msb : 4;
     uint8_t chr_rom_size_msb : 4;
     uint8_t prg_ram_shift_count : 4;
-    uint8_t prg_nvram_eeprom_shift_count : 4;
+    uint8_t prg_nvram_shift_count : 4;
     uint8_t chr_ram_shift_count : 4;
     uint8_t chr_nvram_shift_count : 4;
     uint8_t timing_mode : 2;
@@ -49,29 +49,39 @@ typedef struct
     uint8_t *data;
     uint32_t size;
     uint32_t mask;
+} PrgRam;
+
+typedef struct
+{
+    uint8_t *data;
+    uint32_t size;
+    uint32_t mask;
     bool ram;
 } ChrRom;
 
 typedef struct Cart {
     PrgRom prg_rom;
+    PrgRam prg_ram;
     ChrRom chr_rom;
-    // WRAM or SRAM
-    uint8_t *ram;
+    uint8_t (*MemMapReadFn[0x10000])(struct Cart *cart, const uint32_t addr);
+    void (*MemMapWriteFn[0x10000])(struct Cart *cart, const uint32_t addr, const uint8_t data);
     int mapper_num;
     int arrangement;
     const char *name;
     bool battery;
-    uint8_t (*PrgReadFn)(struct Cart *cart, const uint16_t addr);
-    uint8_t (*ChrReadFn)(struct Cart *cart, const uint16_t addr);
-    void (*ChrWriteFn)(struct Cart *cart, const uint16_t addr, const uint8_t data);
-    void (*RegWriteFn)(const uint16_t addr, const uint8_t data);
-    uint8_t (*RegReadFn)(const uint16_t addr);
+    uint8_t (*ChrReadFn)(struct Cart *cart, const uint32_t addr);
+    void (*ChrWriteFn)(struct Cart *cart, const uint32_t addr, const uint8_t data);
 } Cart;
 
 #define CART_RAM_SIZE 0x2000
 #define CHR_RAM_SIZE 0x2000
 
 int CartLoad(Arena *arena, Cart *cart, const char *path);
+uint8_t CartReadPrgRam(Cart *cart, const uint32_t addr);
+void CartWritePrgRam(Cart *cart, const uint32_t addr, const uint8_t data);
+uint8_t CartReadPrgRom(Cart *cart, const uint32_t addr);
+uint8_t CartReadChr(Cart *cart, const uint32_t addr);
+void CartWriteChr(Cart *cart, const uint32_t addr, const uint8_t data);
 void CartSaveSram(Cart *cart);
 
 #endif

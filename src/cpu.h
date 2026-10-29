@@ -50,6 +50,7 @@ typedef union
 
 typedef struct
 {
+    uint8_t sys_ram[0x800];
     char debug_msg[128];
     int64_t cycles;
     uint16_t pc;
@@ -89,7 +90,7 @@ typedef struct
     cpu->status.z = !var
 
 void CPU_Init(Cpu *cpu);
-void CPU_Update(Cpu *cpu, bool debug_info);
+void CPU_ExecuteInstr(Cpu *cpu, bool debug_info);
 void CPU_Reset(Cpu *cpu);
 
 #endif

@@ -40,21 +40,31 @@ static void NonesDrawDebugInfo(Nones *nones, NonesInfo *info)
     if (SDL_GetTicks() - info->timer >= 1000)
     {
         snprintf(info->fps_msg, sizeof(info->fps_msg), "FPS:%lu", info->frames);
-        snprintf(info->ups_msg, sizeof(info->ups_msg), "UPS:%lu", info->updates);
-        info->updates = info->frames = 0;
+        info->frames = 0;
         info->timer += 1000;
     }
 
     SDL_SetRenderDrawColor(nones->renderer, 255, 255, 84, SDL_ALPHA_OPAQUE);
     SDL_RenderDebugText(nones->renderer, 200, 1, info->fps_msg);
-    SDL_RenderDebugText(nones->renderer, 200, 9, info->ups_msg);
+}
+
+static void NonesToggleFullScreen(Nones *nones)
+{
+    nones->fullscreen = !nones->fullscreen;
+    if (!SDL_SetWindowFullscreen(nones->window, nones->fullscreen))
+    {
+        SDL_Log("SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
+    }
+}
+
+static int NonesGetScreenWidth(Nones *nones)
+{
+    return nones->aspect_ratio ? SCREEN_WIDTH + SCREEN_WIDTH_EDGE : SCREEN_WIDTH;
 }
 
 static void NonesSetIntegerScale(Nones *nones, int scale)
 {
-    SDL_SetWindowSize(nones->window, SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale);
-    SDL_SetRenderScale(nones->renderer, scale, scale);
-    //SDL_SetRenderLogicalPresentation(nones->renderer, SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
+    SDL_SetWindowSize(nones->window, NonesGetScreenWidth(nones) * scale, SCREEN_HEIGHT * scale);
     // Doesn't work on Wayland...
     SDL_SetWindowPosition(nones->window,  SDL_WINDOWPOS_CENTERED,  SDL_WINDOWPOS_CENTERED);
 }
@@ -150,11 +160,14 @@ static void NonesHandleInput(Nones *nones)
         NonesSetIntegerScale(nones, 5);
 }
 
-static void NonesInit(Nones *nones, const char *path, const char *audio_driver, const int sample_rate)
+static void NonesInit(Nones *nones, const char *path, const char *audio_driver, const int sample_rate, const int aspect_ratio, const bool fullscreen)
 {
     memset(nones, 0, sizeof(*nones));
-    nones->arena = ArenaCreate(1024 * 1024 * 3);
+    nones->arena = ArenaCreate(1024 * 1024 * 5);
     nones->system = SystemCreate(nones->arena);
+    nones->aspect_ratio = aspect_ratio;
+
+    const int screen_width = NonesGetScreenWidth(nones);
 
     if (SystemLoadCart(nones->arena, nones->system, path))
     {
@@ -176,7 +189,7 @@ static void NonesInit(Nones *nones, const char *path, const char *audio_driver, 
 
     SDL_Log("SDL audio driver: %s\n", SDL_GetCurrentAudioDriver());
 
-    nones->window = SDL_CreateWindow("nones", SCREEN_WIDTH * 2, SCREEN_HEIGHT * 2, 0);
+    nones->window = SDL_CreateWindow("nones", screen_width * 2, SCREEN_HEIGHT * 2, 0);
     if (!nones->window)
     {
         SDL_Log("Window Error: %s", SDL_GetError());
@@ -193,10 +206,21 @@ static void NonesInit(Nones *nones, const char *path, const char *audio_driver, 
         exit(EXIT_FAILURE);
     }
 
+    if (!SDL_SetRenderLogicalPresentation(nones->renderer,
+                                          screen_width,
+                                          SCREEN_HEIGHT,
+                                          SDL_LOGICAL_PRESENTATION_LETTERBOX))
+    {
+        SDL_Log("SDL_SetRenderLogicalPresentation failed: %s\n", SDL_GetError());
+    }
+
     if (!SDL_SetRenderVSync(nones->renderer, 1))
     {
         SDL_Log("Could not enable VSync! SDL error: %s\n", SDL_GetError());
     }
+
+    if (fullscreen)
+        NonesToggleFullScreen(nones);
 
     nones->gamepads = SDL_GetGamepads(&nones->num_gamepads);
     if (nones->gamepads)
@@ -239,15 +263,20 @@ static void NonesInit(Nones *nones, const char *path, const char *audio_driver, 
 
     SDL_ResumeAudioStreamDevice(stream);
 
-    //SDL_SetRenderLogicalPresentation(nones->renderer, SCREEN_WIDTH, SCREEN_WIDTH,  SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
-    SDL_SetRenderScale(nones->renderer, 2, 2);
-
     nones->texture = SDL_CreateTexture(nones->renderer,
         SDL_PIXELFORMAT_RGBA8888,
         SDL_TEXTUREACCESS_STREAMING,
         SCREEN_WIDTH, SCREEN_HEIGHT);
 
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+    // Make sure the linked SDL3 library being used is also the correct version.
+    SDL_ScaleMode scale_mode = (SDL_GetVersion() >= SDL_VERSIONNUM(3,4,0) ? SDL_SCALEMODE_PIXELART : SDL_SCALEMODE_NEAREST);
+    SDL_SetTextureScaleMode(nones->texture, scale_mode);
+#else
     SDL_SetTextureScaleMode(nones->texture, SDL_SCALEMODE_NEAREST);
+#endif
+
+    SDL_SetWindowPosition(nones->window,  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 }
 
 static void NonesShutdown(Nones *nones)
@@ -274,10 +303,10 @@ static void NonesReset(Nones *nones)
     SystemReset(nones->system);
 }
 
-void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sample_rate,
-              const char *path, const char *audio_driver)
+void NonesRun(Nones *nones, bool ppu_warmup, bool fullscreen, const int aspect_ratio, bool swap_duty_cycles,
+              const int sample_rate, const char *path, const char *audio_driver)
 {
-    NonesInit(nones, path, audio_driver, sample_rate);
+    NonesInit(nones, path, audio_driver, sample_rate, aspect_ratio, fullscreen);
 
     // Allocate pixel buffers (back and front)
     uint32_t *buffers[2];
@@ -293,9 +322,7 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sa
     NonesInfo info = {
         .cpu_msg = {'\0'},
         .fps_msg = {'\0'},
-        .ups_msg = {'\0'},
         .frames = 0,
-        .updates = 0,
         .timer = SDL_GetTicks(),
     };
 
@@ -323,6 +350,9 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sa
                 case SDL_EVENT_KEY_UP:
                     switch (event.key.key)
                     {
+                        case SDLK_F:
+                            NonesToggleFullScreen(nones);
+                            break;
                         case SDLK_F1:
                             nones->debug_info = !nones->debug_info;
                             break;
@@ -345,24 +375,20 @@ void NonesRun(Nones *nones, bool ppu_warmup, bool swap_duty_cycles, const int sa
 
         NonesHandleInput(nones);
 
-        while (accumulator >= accum_delta)
+        if (accumulator >= accum_delta)
         {
             SystemRun(nones->system, nones->debug_info);
 
             accumulator -= accum_delta;
-            ++info.updates;
+
+            SDL_LockTexture(nones->texture, NULL, &raw_pixels, &raw_pitch);
+            memcpy(raw_pixels, nones->system->ppu->buffers[1], buffer_size);
+            SDL_UnlockTexture(nones->texture);
+
+            SDL_RenderTexture(nones->renderer, nones->texture, NULL, NULL);
+            NonesDrawDebugInfo(nones, &info);
+            SDL_RenderPresent(nones->renderer);
         }
-
-        SDL_LockTexture(nones->texture, NULL, &raw_pixels, &raw_pitch);
-        memcpy(raw_pixels, nones->system->ppu->buffers[1], buffer_size);
-        SDL_UnlockTexture(nones->texture);
-
-        SDL_RenderClear(nones->renderer);
-        SDL_RenderTexture(nones->renderer, nones->texture, NULL, NULL);
-
-        NonesDrawDebugInfo(nones, &info);
-
-        SDL_RenderPresent(nones->renderer);
 
         uint64_t frame_time = SDL_GetTicksNS() - start_time;
         if (frame_time < FRAME_CAP_NS)

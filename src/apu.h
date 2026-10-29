@@ -26,7 +26,7 @@ typedef union
     struct
     {
         // Shift count (number of bits).
-        // If SSS is 0, then behaves like E=0.
+        // If SSS is 0, then behaves like E=0. 
         uint8_t shift_count : 3;
         // Negate flag:
         // 0: add to period, sweeping toward lower frequencies;
@@ -34,7 +34,7 @@ typedef union
         uint8_t negate : 1;
         // The divider's period is P + 1 half-frames
         uint8_t devider_period : 3;
-        // Enabled flag
+        // Enabled flag 
         uint8_t enabled : 1;
     };
 } ApuPulseSweepReg;
@@ -92,15 +92,15 @@ typedef union
 // The sequencer is clocked on every other CPU cycle, so 2 CPU cycles = 1 APU cycle.
 // The sequencer keeps track of how many APU cycles have elapsed in total, and each step of the sequence will
 // occur once that total has reached the indicated amount (with an additional delay of one CPU cycle for the quarter and half frame signals).
-// Once the last step has executed, the count resets to 0 on the next APU cycle.
+// Once the last step has executed, the count resets to 0 on the next APU cycle. 
 typedef struct
 {
-    ApuFrameCounterControl control;
     int timer;
     int reload;
     int reset_delay;
     int16_t step;
-    bool interrupt;
+    ApuFrameCounterControl ctrl;
+    bool clear_irq;
     bool reset;
 } ApuFrameCounter;
 
@@ -119,7 +119,7 @@ typedef union
     };
 } ApuNoiseReg;
 
-typedef union
+typedef union 
 {
     uint16_t raw : 15;
     struct
@@ -242,15 +242,14 @@ typedef struct
         uint8_t output_level : 7;
     } dmc;
 
-    ApuFrameCounter frame_counter;
+    ApuFrameCounter frame_ctr;
     ApuStatus status;
 
     int alignment;
-    bool clear_frame_irq;
     bool swap_duty_cycles;
 } Apu;
 
-typedef enum
+typedef enum 
 {
     SEQ_CLOCK_NONE,
     // Envelopes & triangle's linear counter
@@ -263,42 +262,41 @@ typedef struct
 {
     int cycles;
     SequencerClockEvent event;
-    // Frame interrupt flag
+    // Frame interrupt flag 
     bool frame_interrupt;
 } SequenceStep;
 
 #define APU_FREQ 894886.5
 #define APU_CYCLES_PER_FRAME 14890.0f
-#define LOW_PASS_CUTOFF 14000
+#define HPF_CUTOFF 37
 
-#define APU_PULSE_1_DUTY 0x4000
-#define APU_PULSE_1_SWEEP 0x4001
-#define APU_PULSE_1_TIMER_LOW 0x4002
-#define APU_PULSE_1_TIMER_HIGH 0x4003
+enum ApuRegs
+{
+    APU_PULSE_1_DUTY              = 0x4000,
+    APU_PULSE_1_SWEEP             = 0x4001,
+    APU_PULSE_1_TIMER_LOW         = 0x4002,
+    APU_PULSE_1_TIMER_HIGH        = 0x4003,
+    APU_PULSE_2_DUTY              = 0x4004,
+    APU_PULSE_2_SWEEP             = 0x4005,
+    APU_PULSE_2_TIMER_LOW         = 0x4006,
+    APU_PULSE_2_TIMER_HIGH        = 0x4007,
+    APU_TRIANGLE_LINEAR_COUNTER   = 0x4008,
+    APU_TRIANGLE_TIMER_LOW        = 0x400A,
+    APU_TRIANGLE_TIMER_HIGH       = 0x400B,
+    APU_NOISE                     = 0x400C,
+    APU_NOISE_PERIOD              = 0x400E,
+    APU_NOISE_LENGTH_COUNTER_LOAD = 0x400F,
+    APU_DMC_CONTROL               = 0x4010,
+    APU_DMC_DIRECT_LOAD           = 0x4011,
+    APU_DMC_SAMPLE_ADDR           = 0x4012,
+    APU_DMC_SAMPLE_LENGTH         = 0x4013,
+    APU_STATUS                    = 0x4015,
+    APU_FRAME_COUNTER             = 0x4017
+};
 
-#define APU_PULSE_2_DUTY 0x4004
-#define APU_PULSE_2_SWEEP 0x4005
-#define APU_PULSE_2_TIMER_LOW 0x4006
-#define APU_PULSE_2_TIMER_HIGH 0x4007
-
-#define APU_TRIANGLE_LINEAR_COUNTER 0x4008
-#define APU_TRIANGLE_TIMER_LOW 0x400A
-#define APU_TRIANGLE_TIMER_HIGH 0x400B
-
-#define APU_NOISE 0x400C
-#define APU_NOISE_PERIOD 0x400E
-#define APU_NOISE_LENGTH_COUNTER_LOAD 0x400F
-
-#define APU_DMC_CONTROL 0x4010
-#define APU_DMC_DIRECT_LOAD 0x4011
-#define APU_DMC_SAMPLE_ADDR 0x4012
-#define APU_DMC_SAMPLE_LENGTH 0x4013
-
-#define APU_STATUS 0x4015
-#define APU_FRAME_COUNTER 0x4017
-
+void ApuClockEnvelope(ApuEnvelope *envelope, const uint8_t volume, const bool counter_halt);
 uint8_t ApuReadStatus(Apu *apu, const uint8_t bus_data);
-void WriteAPURegister(Apu *apu, const uint16_t addr, const uint8_t data);
+void ApuWriteReg(Apu *apu, const uint16_t addr, const uint8_t data);
 bool PollApuIrqs(Apu *apu);
 void ApuDmcDmaUpdate(Apu *apu);
 void APU_Init(Apu *apu, Arena *arena, const bool swap_duty_cycles, int sample_rate);

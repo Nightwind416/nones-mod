@@ -19,7 +19,8 @@
 static soxr_t soxr;
 static soxr_error_t error;
 
-//#define APU_FAST_MIXER
+static float pulse_lut[31];
+static float tnd_lut[203];
 
 static const SequenceStep sequence_table[2][6] =
 {
@@ -102,10 +103,8 @@ static const uint8_t dmc_table[16] =
 
 bool PollApuIrqs(Apu *apu)
 {
-    return apu->status.dmc_irq | (apu->status.frame_irq & ~apu->frame_counter.control.irq_inhibit);
+    return apu->status.dmc_irq | (apu->status.frame_irq & ~apu->frame_ctr.ctrl.irq_inhibit);
 }
-
-#define FCPU 1789773.0
 
 static void ApuWritePulse1Duty(Apu *apu, const uint8_t data)
 {
@@ -249,15 +248,7 @@ static void ApuUpdatePulseTargetPeriod(ApuPulse *pulse, const bool pulse1)
         target += delta;
     }
 
-    if (target > 0x7FF || pulse->timer_period.raw < 8)
-    {
-        pulse->muting = true;
-    }
-    else
-    {
-        pulse->muting = false;
-    }
-
+    pulse->muting = (target > 0x7FF || pulse->timer_period.raw < 8);
     pulse->target_period = MAX(0, target);
 }
 
@@ -313,26 +304,25 @@ static void ApuClockSweeps(Apu *apu)
     }
 }
 
-static void ApuClockEnvelope(ApuEnvelope *envelope, const uint8_t volume, const bool counter_halt)
+void ApuClockEnvelope(ApuEnvelope *envelope, const uint8_t volume, const bool counter_halt)
 {
-    if (!envelope->start)
-    {
-        if (envelope->counter > 0)
-            --envelope->counter;
-        else
-        {
-            envelope->counter = volume;
-            if (envelope->decay_counter > 0)
-                --envelope->decay_counter;
-            else if (counter_halt)
-                envelope->decay_counter = 15;
-        }
-    }
-    else
+    if (envelope->start)
     {
         envelope->start = false;
         envelope->decay_counter = 15;
         envelope->counter = volume;
+        return;
+    }
+
+    if (envelope->counter > 0)
+        --envelope->counter;
+    else
+    {
+        envelope->counter = volume;
+        if (envelope->decay_counter > 0)
+            --envelope->decay_counter;
+        else if (counter_halt)
+            envelope->decay_counter = 15;
     }
 }
 
@@ -434,15 +424,16 @@ static void ApuClockDmc(Apu *apu)
 
 static void ApuResetFrameCounter(Apu *apu)
 {
-    apu->frame_counter.reload = apu->frame_counter.control.seq_mode ? 37282 : 29830;
-    apu->frame_counter.reset_delay = 2;
-    apu->frame_counter.step = 0;
-    apu->frame_counter.timer = 0;
-    apu->frame_counter.reset = false;
+    apu->frame_ctr.reload = 29830;
+    apu->frame_ctr.reset_delay = 2;
+    apu->frame_ctr.step = 0;
+    apu->frame_ctr.timer = 0;
+    apu->frame_ctr.reset = false;
 
-    if (apu->frame_counter.control.seq_mode)
+    if (apu->frame_ctr.ctrl.seq_mode)
     {
-        //printf("ApuResetFrameCounter Mode %d: Step %d cpu cycle: %ld\n", apu->frame_counter.control.seq_mode, apu->frame_counter.step, apu->cycles);
+        //printf("ApuResetFrameCounter Mode %d: Step %d cpu cycle: %ld\n", apu->frame_ctr.ctrl.seq_mode, apu->frame_ctr.step, apu->cycles);
+        apu->frame_ctr.reload = 37282;
         ApuClockEnvelopes(apu);
         ApuClockLinearCounters(apu);
         ApuClockLengthCounters(apu);
@@ -454,12 +445,10 @@ static void ApuResetFrameCounter(Apu *apu)
 // If the write occurs between APU cycles, the effects occurs 4 CPU cycles after the write cycle.
 static void ApuWriteFrameCounter(Apu *apu, const uint8_t data)
 {
-    //printf("\nApu frame counter called on cycle: %d\n", apu->frame_counter.timer);
-    apu->frame_counter.control.raw = data;
-    apu->frame_counter.reset = true;
-
-    // Seems correct
-    apu->status.frame_irq &= ~apu->frame_counter.control.irq_inhibit;
+    //printf("\nApu frame counter called on cycle: %d\n", apu->frame_ctr.timer);
+    apu->frame_ctr.ctrl.raw = data;
+    apu->frame_ctr.reset = true;
+    apu->status.frame_irq &= ~apu->frame_ctr.ctrl.irq_inhibit;
 }
 
 static void ApuWritePulse1Sweep(Apu *apu, const uint8_t data)
@@ -506,7 +495,7 @@ void ApuDmcDmaUpdate(Apu *apu)
     }
 }
 
-void WriteAPURegister(Apu *apu, const uint16_t addr, const uint8_t data)
+void ApuWriteReg(Apu *apu, const uint16_t addr, const uint8_t data)
 {
     switch (addr)
     {
@@ -603,7 +592,7 @@ uint8_t ApuReadStatus(Apu *apu, const uint8_t bus_data)
         .dmc_irq = apu->status.dmc_irq
     };
 
-    apu->clear_frame_irq = true;
+    apu->frame_ctr.clear_irq = true;
 
     //printf("Timer Period value: %d\n", apu->dmc.timer_period);
     //printf("Dmc bytes remaining: %d\n", apu->dmc.bytes_remaining);
@@ -612,6 +601,10 @@ uint8_t ApuReadStatus(Apu *apu, const uint8_t bus_data)
 
 static void ApuClockTimers(Apu *apu)
 {
+    apu->pulse1.output = 0;
+    apu->pulse2.output = 0;
+    apu->noise.output = 0;
+
     if (apu->pulse1.timer.raw > 0)
         --apu->pulse1.timer.raw;
     else
@@ -620,30 +613,12 @@ static void ApuClockTimers(Apu *apu)
         apu->pulse1.duty_step = (apu->pulse1.duty_step - 1) & 7;
     }
 
-    if (!apu->pulse1.length_counter || apu->pulse1.muting)
-    {
-        apu->pulse1.output = 0;
-    }
-    else
-    {
-        apu->pulse1.output = duty_cycle_table[apu->swap_duty_cycles][apu->pulse1.reg.duty][apu->pulse1.duty_step];
-    }
-
     if (apu->pulse2.timer.raw > 0)
         --apu->pulse2.timer.raw;
     else
     {
         apu->pulse2.timer.raw = apu->pulse2.timer_period.raw;
         apu->pulse2.duty_step = (apu->pulse2.duty_step - 1) & 7;
-    }
-
-    if (!apu->pulse2.length_counter || apu->pulse2.muting)
-    {
-        apu->pulse2.output = 0;
-    }
-    else
-    {
-        apu->pulse2.output = duty_cycle_table[apu->swap_duty_cycles][apu->pulse2.reg.duty][apu->pulse2.duty_step];
     }
 
     if (apu->noise.timer.raw > 0)
@@ -665,11 +640,19 @@ static void ApuClockTimers(Apu *apu)
         apu->noise.shift_reg.bit14 = feedback;
     }
 
-    if (apu->noise.length_counter == 0 || apu->noise.shift_reg.bit0)
+    if (apu->pulse1.length_counter && !apu->pulse1.muting)
     {
-        apu->noise.output = 0;
+        apu->pulse1.output = duty_cycle_table[apu->swap_duty_cycles][apu->pulse1.reg.duty][apu->pulse1.duty_step];
+        apu->pulse1.output *= apu->pulse1.volume;
     }
-    else
+
+    if (apu->pulse2.length_counter && !apu->pulse2.muting)
+    {
+        apu->pulse2.output = duty_cycle_table[apu->swap_duty_cycles][apu->pulse2.reg.duty][apu->pulse2.duty_step];
+        apu->pulse2.output *= apu->pulse2.volume;
+    }
+
+    if (apu->noise.length_counter && !apu->noise.shift_reg.bit0)
     {
         apu->noise.output = apu->noise.volume;
     }
@@ -690,18 +673,10 @@ static float ApplyFilter(float sample, float prev_sample, float alpha)
 
 static void ApuMixSample(Apu *apu)
 {
-    float square1 = apu->pulse1.output * apu->pulse1.volume;
-    float square2 = apu->pulse2.output * apu->pulse2.volume;
+    float pulse = pulse_lut[apu->pulse1.output + apu->pulse2.output];
+    float tnd_out = tnd_lut[3 * apu->triangle.output + 2 * apu->noise.output + apu->dmc.output_level];
 
-#ifdef APU_FAST_MIXER
-    float pulse = 0.00752f * (square1 + square2);
-    float tnd_out = 0.00851f * apu->triangle.output + 0.00494f * apu->noise.output + 0.00335f * apu->dmc.output_level;
-#else
-    float pulse = 95.88 / ((8128.0 / (square1 + square2)) + 100);
-    float tnd = 1 / ((apu->triangle.output / 8227.0) + (apu->noise.output / 12241.0) + (apu->dmc.output_level / 22638.0));
-    float tnd_out = 159.79 / (tnd + 100);
-#endif
-    float raw_sample = pulse + tnd_out;
+    float raw_sample = pulse + tnd_out + MapperGetMixedAudio();
     // Apply a HPF to fix the the DC offset without affecting the FR too much
     apu->mixer.hpf_sample = ApplyFilter(raw_sample, apu->mixer.hpf_sample, apu->mixer.hpf_alpha);
     // Apply a LPF just for the buffer used as the input for soxr, could also just make this lowpass cutoff at 14khz
@@ -715,12 +690,12 @@ static void ApuGetClock(Apu *apu)
         ApuResetSample(apu);
     }
 
-    apu->status.frame_irq &= !apu->clear_frame_irq;
-    apu->clear_frame_irq = false;
+    apu->status.frame_irq &= !apu->frame_ctr.clear_irq;
+    apu->frame_ctr.clear_irq = false;
 
-    if (apu->frame_counter.reset)
+    if (apu->frame_ctr.reset)
     {
-        if (!(--apu->frame_counter.reset_delay))
+        if (!(--apu->frame_ctr.reset_delay))
         {
             ApuResetFrameCounter(apu);
         }
@@ -730,6 +705,7 @@ static void ApuGetClock(Apu *apu)
 static void ApuPutClock(Apu *apu)
 {
     ApuClockTimers(apu);
+    MapperClockAudioTimers();
     ApuClockDmc(apu);
     ApuMixSample(apu);
 
@@ -756,16 +732,18 @@ static void ApuPutClock(Apu *apu)
 
 void APU_Tick(Apu *apu, bool put_cycle)
 {
-    SequenceStep step = sequence_table[apu->frame_counter.control.seq_mode][apu->frame_counter.step];
+    SequenceStep step = sequence_table[apu->frame_ctr.ctrl.seq_mode][apu->frame_ctr.step];
 
     if (apu->dmc.empty && apu->dmc.bytes_remaining && apu->status.dmc)
     {
         SystemSignalDmcDma();
     }
 
-    if (apu->frame_counter.timer == step.cycles)
+    MapperClockAudio();
+
+    if (apu->frame_ctr.timer == step.cycles)
     {
-        //printf("Sequencer: Framecounter called on cycle: %d cpu cycle: %ld\n", apu->frame_counter.timer, apu->cycles);
+        //printf("Sequencer: Framecounter called on cycle: %d cpu cycle: %ld\n", apu->frame_ctr.timer, apu->cycles);
         if (step.event == SEQ_CLOCK_QUARTER_FRAME)
         {
             ApuClockEnvelopes(apu);
@@ -781,11 +759,11 @@ void APU_Tick(Apu *apu, bool put_cycle)
         }
         if (step.frame_interrupt)
         {
-            apu->status.frame_irq = ~apu->frame_counter.control.irq_inhibit;
+            apu->status.frame_irq = apu->frame_ctr.timer != 29830 ? true : !apu->frame_ctr.ctrl.irq_inhibit;
             // Don't overwrite the newly set frame irq flag
-            apu->clear_frame_irq = false;
+            apu->frame_ctr.clear_irq = false;
         }
-        apu->frame_counter.step = (apu->frame_counter.step + 1) % 6;
+        apu->frame_ctr.step = (apu->frame_ctr.step + 1) % 6;
     }
 
     ApuClockTriangle(apu);
@@ -799,8 +777,8 @@ void APU_Tick(Apu *apu, bool put_cycle)
         ApuPutClock(apu);
     }
 
-    apu->frame_counter.timer %= apu->frame_counter.reload;
-    ++apu->frame_counter.timer;
+    apu->frame_ctr.timer %= apu->frame_ctr.reload;
+    ++apu->frame_ctr.timer;
 }
 
 void APU_Init(Apu *apu, Arena *arena, const bool swap_duty_cycles, int sample_rate)
@@ -812,6 +790,8 @@ void APU_Init(Apu *apu, Arena *arena, const bool swap_duty_cycles, int sample_ra
     const int samples_per_frame = apu->mixer.sample_rate / 60;
     // Set the sample ratio to be used by soxr, 
     const int soxr_sample_ratio = 3;
+    // LPF freq cutoff based on sample rate
+    const float lpf_cutoff = apu->mixer.sample_rate * 0.45;
     apu->mixer.input_len = samples_per_frame * soxr_sample_ratio;
     apu->mixer.output_len = samples_per_frame;
     apu->mixer.accum_delta = APU_CYCLES_PER_FRAME / apu->mixer.input_len;
@@ -819,15 +799,24 @@ void APU_Init(Apu *apu, Arena *arena, const bool swap_duty_cycles, int sample_ra
     apu->mixer.output_size = apu->mixer.output_len * sizeof(int16_t);
     apu->mixer.input_buffer = ArenaPush(arena, apu->mixer.input_size);
     apu->mixer.output_buffer = ArenaPush(arena, apu->mixer.output_size);
-    //const float max_cutoff = apu->mixer.sample_rate * soxr_sample_ratio * 0.45;
-    apu->mixer.lpf_alpha = ComputeFilterAlpha(APU_FREQ, 14000);
-    apu->mixer.hpf_alpha = ComputeFilterAlpha(APU_FREQ, 37);
+    apu->mixer.lpf_alpha = ComputeFilterAlpha(APU_FREQ, lpf_cutoff);
+    apu->mixer.hpf_alpha = ComputeFilterAlpha(APU_FREQ, HPF_CUTOFF);
 
     apu->noise.shift_reg.raw = 1;
     apu->dmc.sample_length = 1;
     apu->dmc.empty = true;
     apu->alignment = 0;
     apu->swap_duty_cycles = swap_duty_cycles;
+
+    for (int i = 0; i < 31; i++)
+    {
+        pulse_lut[i] = 95.52 / (8128.0 / i + 100);
+    }
+
+    for (int i = 0; i < 203; i++)
+    {
+        tnd_lut[i] = 163.67 / (24329.0 / i + 100);
+    }
 
     soxr_quality_spec_t q_spec = soxr_quality_spec(SOXR_HQ, SOXR_VR);
     soxr_io_spec_t io_spec = soxr_io_spec(SOXR_FLOAT32_I, SOXR_INT16_I);
@@ -850,4 +839,3 @@ void APU_Reset(Apu *apu)
     apu->dmc.sample_length = 1;
     apu->dmc.empty = true;
 }
-
